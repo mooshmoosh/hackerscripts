@@ -1,0 +1,31 @@
+#!/usr/bin/python3
+
+import sys
+
+if len(sys.argv) < 2:
+    print("please provide a filename")
+    exit()
+
+filename = sys.argv[1]
+
+template = """<!DOCTYPE html>
+<html>
+<head>
+<link rel="stylesheet" href=\"""" + filename + """_styles.css">
+<title>Page Title</title>
+</head>
+<body>
+
+</body>
+<script src=\"""" + filename + """_app.js"></script>
+</html>
+"""
+
+with open(filename + ".html", "w") as f:
+    f.write(template)
+
+with open(filename + "_app.js", "w") as f:
+    f.write("")
+
+with open(filename + "_styles.css", "w") as f:
+    f.write("")

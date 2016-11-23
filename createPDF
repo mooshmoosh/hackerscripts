@@ -1,0 +1,14 @@
+#!/usr/bin/python
+
+import os
+import sys
+
+if len(sys.argv) < 3:
+    print("usage: " + sys.argv[0] + " {input_directory} {output_filename}")
+    print("    Creates a pdf from a directory of images")
+    exit()
+
+input_directory = sys.argv[1]
+output_filename = sys.argv[2]
+
+os.system("convert %s/* -adjoin %s" % (input_directory, output_filename))

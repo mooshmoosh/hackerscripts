@@ -1,0 +1,16 @@
+#!/usr/bin/python3
+
+# I can never remember the syntax for the git tag command.
+
+import os
+import sys
+
+if len(sys.argv) < 2:
+    print("usage: " + sys.argv[0] + " {deployment_number}")
+    exit()
+
+deployment_number = sys.argv[1]
+
+with open('Version.py', 'w') as f:
+    f.write('__version__ = "%s"' % deployment_number)
+os.system('git tag -a %s -m "%s"' % ('deployment.' + deployment_number, "Deployment " + deployment_number))

@@ -1,0 +1,15 @@
+#!/bin/bash
+
+# Create a blank bash script, open it in vim. When vim exits, run the
+# script and delete it. If you know how to write all the commands you
+# want quickly using vim macros, this will let you do that.
+
+FILENAME="./tmp-"`date +"%Y%m%d%H%M%S"`
+echo "#!/bin/bash" >> $FILENAME
+echo "" >> $FILENAME
+echo "" >> $FILENAME
+chmod +x $FILENAME
+
+vim $FILENAME +
+./$FILENAME
+rm $FILENAME

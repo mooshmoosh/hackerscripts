@@ -1,0 +1,29 @@
+#!/usr/bin/python3
+
+import os
+import sys
+import json
+import csv
+import collections
+
+if len(sys.argv) < 2:
+    print("usage: " + sys.argv[0] + " {inputfile}")
+    print("Takes a csv file where the first column is the keys and the second is")
+    print("the values, and creates that map in json. This is good for getting non")
+    print("technical people, who only know excel to build maps that can be used in")
+    print("python")
+    exit()
+
+inputfile = sys.argv[1]
+result = collections.OrderedDict()
+
+with open(inputfile, 'r') as f:
+    csvreader = csv.reader(f)
+    for row in csvreader:
+        result[row[0]] = row[1]
+if inputfile.endswith('.csv'):
+    outputfile = inputfile[:-4] + '.json'
+else:
+    outputfile = inputfile + '.json'
+with open(outputfile, 'w') as f:
+    f.write(json.dumps(result, indent=4))
