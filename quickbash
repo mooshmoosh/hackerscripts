@@ -3,6 +3,8 @@
 # Create a blank bash script, open it in vim. When vim exits, run the
 # script and delete it. If you know how to write all the commands you
 # want quickly using vim macros, this will let you do that.
+#
+# If you want to keep the temporary script around, use quickbash --keep
 
 FILENAME="./tmp-"`date +"%Y%m%d%H%M%S"`
 echo "#!/bin/bash" >> $FILENAME
@@ -12,4 +14,9 @@ chmod +x $FILENAME
 
 vim $FILENAME +
 ./$FILENAME
-rm $FILENAME
+if [ $# -gt 0 ] && [ $1=="--keep" ]
+then
+    echo "Keeping temp script as $FILENAME"
+else
+    rm $FILENAME
+fi
