@@ -1,0 +1,30 @@
+#!/bin/bash
+
+# Create a blank bash script, open it in vim. When vim exits, run the
+# script and delete it. If you know how to write all the commands you
+# want quickly using vim macros, this will let you do that.
+
+FILENAME_SUFFIX="tmp-"`date +"%Y%m%d%H%M%S"`
+OURS_FILENAME="OURS_$FILENAME_SUFFIX"
+THEIRS_FILENAME="THEIRS_$FILENAME_SUFFIX"
+
+display_help () {
+    echo "Usage: git-vimdiff-fix filename-containing-conflicts"
+    echo ""
+    echo "    Opens both versions of a file in vimdiff. Edit the left panel to be the"
+    echo "    resolved file"
+    exit
+}
+
+test $# -lt 1 && display_help
+
+FILENAME=$1
+
+git checkout --ours $FILENAME
+mv $FILENAME $OURS_FILENAME
+git checkout --theirs $FILENAME
+mv $FILENAME $THEIRS_FILENAME
+vimdiff $OURS_FILENAME $THEIRS_FILENAME
+rm $THEIRS_FILENAME
+mv $OURS_FILENAME $FILENAME
+git add $FILENAME
