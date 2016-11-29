@@ -7,6 +7,7 @@
 FILENAME_SUFFIX="tmp-"`date +"%Y%m%d%H%M%S"`
 OURS_FILENAME="OURS_$FILENAME_SUFFIX"
 THEIRS_FILENAME="THEIRS_$FILENAME_SUFFIX"
+DIFF_TOOL=vimdiff
 
 display_help () {
     echo "Usage: git-vimdiff-fix filename-containing-conflicts"
@@ -24,7 +25,7 @@ git checkout --ours $FILENAME
 mv $FILENAME $OURS_FILENAME
 git checkout --theirs $FILENAME
 mv $FILENAME $THEIRS_FILENAME
-vimdiff $OURS_FILENAME $THEIRS_FILENAME
+$DIFF_TOOL $OURS_FILENAME $THEIRS_FILENAME
 rm $THEIRS_FILENAME
 mv $OURS_FILENAME $FILENAME
 git add $FILENAME
