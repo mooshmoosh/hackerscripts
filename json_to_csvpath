@@ -1,0 +1,45 @@
+#!/usr/bin/python3
+
+import os
+import sys
+import json
+import csv
+import collections
+
+if len(sys.argv) < 2:
+    print("usage: " + sys.argv[0] + " {inputfile}")
+    print("")
+    print("Takes a json file and generates a csv file with each row representing a")
+    print("leaf node, together with the path to the node. This makes it easier to")
+    print("edit json in spreadsheet programs.")
+    exit()
+
+inputfile = sys.argv[1]
+with open(inputfile, 'r') as f:
+    input_data = json.loads(f.read(), object_pairs_hook=collections.OrderedDict)
+
+def get_rows(path, data):
+    result = []
+    if isinstance(data, list):
+        for index, value in enumerate(data):
+            result += get_rows(path + ['[]', index], value)
+    elif isinstance(data, dict):
+        for key, value in data.items():
+            result += get_rows(path + [key], value)
+    else:
+        result = [path + [str(data)]]
+        return result
+    return result
+
+rows = get_rows([], input_data)
+
+if inputfile.endswith('.json'):
+    outputfile = inputfile[:-5] + '.csv'
+else:
+    outputfile = inputfile + '.csv'
+
+with open(outputfile, 'w') as f:
+    csvwriter = csv.writer(f)
+    for row in rows:
+        csvwriter.writerow(row)
+
