@@ -1,0 +1,5 @@
+#!/bin/bash
+
+# opens all the files that have been modified (according to git status) in neovim in separate tabs
+
+$(git status | awk 'BEGIN {command = "nvim -p ";} /modified/ {command = command " " $2;} END {print command}')
