@@ -1,5 +1,5 @@
 #!/bin/bash
 
-# opens all the files that have been modified (according to git status) in neovim in separate tabs
+# opens all the files that have been modified (according to git status) in neovim
 
-$(git status | awk 'BEGIN {command = "nvim -p ";} /modified/ {command = command " " $2;} END {print command}')
+$(git status | awk 'BEGIN {command = "nvim ";} /modified/ {command = command " " $2;} END {print command}')
