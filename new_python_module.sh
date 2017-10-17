@@ -47,6 +47,9 @@ EOF
 # overridden here to just get the same data locally.
 cat <<EOF >> $MODULE_NAME/tests/Mock$MODULE_NAME.py
 from $MODULE_NAME import $MODULE_NAME
+import os
+
+module_dir = os.path.realpath(os.path.dirname(__file__))
 
 class Mock${MODULE_NAME}($MODULE_NAME):
     pass
