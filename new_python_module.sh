@@ -3,7 +3,8 @@
 display_help () {
     # if this is called, it means the wrong number of arguments were
     # supplied. So we display help and exit.
-    echo "Usage: $0 %s"
+    echo "Create a new python module with place for tests, and a single class"
+    echo "Usage: $0 {module name}"
     exit
 }
 
