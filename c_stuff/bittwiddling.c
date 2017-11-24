@@ -1,5 +1,6 @@
 #include <stdio.h>
 #include <stdlib.h>
+#include <assert.h>
 
 typedef struct {
     unsigned char table[8];
@@ -48,16 +49,26 @@ void delete_program(Program program)
     program.size = 0;
 }
 
+unsigned int get_bit_in_char(unsigned char bits, unsigned int location)
+{
+    return (bits >> location) & 1UL;
+}
+
 unsigned int get_bit(const MemoryBlock block, unsigned int location)
 {
-    return (block.memory[location / 8] >> (location % 8)) & 1UL;
+    return get_bit_in_char(block.memory[location / 8], location % 8);
+}
+
+void set_bit_in_char(unsigned char * bits, unsigned int location, unsigned int bit)
+{
+    bit &= 1UL;
+    unsigned char number = *bits;
+    *bits ^= (-bit ^ number) & (1UL << location);
 }
 
 void set_bit(MemoryBlock block, unsigned int location, unsigned int bit)
 {
-    bit &= 1UL;
-    unsigned char number = block.memory[location / 8];
-    block.memory[location / 8] ^= (-bit ^ number) & (1UL << (location % 8));
+    set_bit_in_char(&(block.memory[location / 8]), location % 8, bit);
 }
 
 unsigned int evaluate(const Expression expr, const MemoryBlock block)
@@ -89,17 +100,20 @@ void forward_pass(Program prog, MemoryBlock block)
 Expression expression_from_function(unsigned int (*function)(unsigned char), const int inputs[8])
 {
     Expression result;
-    MemoryBlock table;
-    table.memory = &(result.table[0]);
-    table.size = 8;
     unsigned int bit;
     unsigned int i;
+    unsigned int j;
     unsigned char number;
     for (i=0; i < 256; ++i) {
-        bit = function((unsigned char) i);
-        number = result.table[i / 8];
-        result.table[i / 8] ^= (-bit ^ number) & (1UL << (i % 8));
+        bit = function((unsigned char) (i));
+        printf("and of %x = %x\n", i, bit);
+        set_bit_in_char(&(result.table[(unsigned int) i / 8]), (unsigned int) i % 8, bit);
     }
+
+    for (i = 0; i < 8; i++) {
+        printf("%x ", result.table[i]);
+    }
+    printf("\n");
     result.inputs[0] = inputs[0];
     result.inputs[1] = inputs[1];
     result.inputs[2] = inputs[2];
@@ -108,60 +122,34 @@ Expression expression_from_function(unsigned int (*function)(unsigned char), con
     result.inputs[5] = inputs[5];
     result.inputs[6] = inputs[6];
     result.inputs[7] = inputs[7];
+
     return result;
 }
 
 unsigned int and_func(unsigned char input)
 {
-    return (input >> 6) & (input >> 7) & 1UL;
+    return ((input >> 6) & (input >> 7) & 1UL);
 }
 
 int main()
 {
-    MemoryBlock block = create_memory_block(16);
-    set_bit(block, 0, 1);
-    set_bit(block, 1, 1);
-    set_bit(block, 2, 1);
-    set_bit(block, 3, 1);
-    set_bit(block, 4, 1);
-    set_bit(block, 5, 1);
-    set_bit(block, 6, 1);
-    set_bit(block, 7, 1);
-    set_bit(block, 8, 1);
-    set_bit(block, 9, 0);
-    set_bit(block, 10, 0);
-    set_bit(block, 11, 1);
-    set_bit(block, 12, 1);
-    set_bit(block, 13, 0);
-    set_bit(block, 14, 1);
-    set_bit(block, 15, 0);
-
-    printf("bit 0 is %d\n", get_bit(block, 0));
-    printf("bit 1 is %d\n", get_bit(block, 1));
-    printf("bit 2 is %d\n", get_bit(block, 2));
-    printf("bit 3 is %d\n", get_bit(block, 3));
-    printf("bit 4 is %d\n", get_bit(block, 4));
-    printf("bit 5 is %d\n", get_bit(block, 5));
-    printf("bit 6 is %d\n", get_bit(block, 6));
-    printf("bit 7 is %d\n", get_bit(block, 7));
-    printf("bit 8 is %d\n", get_bit(block, 8));
-    printf("bit 9 is %d\n", get_bit(block, 9));
-    printf("bit 10 is %d\n", get_bit(block, 10));
-    printf("bit 11 is %d\n", get_bit(block, 11));
-    printf("bit 12 is %d\n", get_bit(block, 12));
-    printf("bit 13 is %d\n", get_bit(block, 13));
-    printf("bit 14 is %d\n", get_bit(block, 14));
-    printf("bit 15 is %d\n", get_bit(block, 15));
-
-    unsigned int inputs[8] = { 0, 1, 2, 3, 4, 5, 6, 7};
-
-    Expression and_expr = expression_from_function(and_func, inputs);
+    unsigned char bits;
     int i;
-    for (i=0; i < 8; i++) {
-        printf("%u,", and_expr.table[i]);
-    }
-    printf("\n");
+    bits = 2;
+    set_bit_in_char(&bits, 0, 1);
+    assert(bits == 3);
+    set_bit_in_char(&bits, 1, 0);
+    assert(bits == 1);
+    set_bit_in_char(&bits, 2, 1);
+    assert(bits == 5);
 
-    delete_memory_block(block);
+    bits = 9;
+    assert(get_bit_in_char(bits, 0) == 1);
+    assert(get_bit_in_char(bits, 1) == 0);
+    assert(get_bit_in_char(bits, 2) == 0);
+    assert(get_bit_in_char(bits, 3) == 1);
+    unsigned int inputs[8] = {0, 1, 2, 3, 4, 5, 6, 7};
+    Expression expr = expression_from_function(and_func, inputs);
+
 }
 
