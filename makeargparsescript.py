@@ -79,16 +79,22 @@ def askYesNo(question):
         "ye": True,
         "yes": True,
         "n": False,
-        "no": False
+        "no": False,
+        "quit": "quit",
+        "qui": "quit",
+        "qu": "quit",
+        "q": "quit"
     }}
     while True:
-        try:
-            is_flag = input(question + " ").strip().lower()
-            if is_flag == "":
-                return False
-            return yes_no_map[is_flag]
-        except:
+        is_flag = input(question + " ").strip().lower()
+        is_flag = yes_no_map.get(is_flag, None)
+        if is_flag == "quit":
+            print("Quitting...")
+            exit()
+        elif is_flag is None:
             print("what?")
+        else:
+            return is_flag
 
 # Uncomment the following if you also need a password
 #password = getpass.getpass('Please enter the password:')
@@ -109,7 +115,7 @@ DateString = datetime.datetime.now().strftime("%Y-%m-%%d-%H-%M-%S")
 
 args = argparse.ArgumentParser()
 {argparse_commands}
-args.parse_args()
+args = args.parse_args()
 """.format(argparse_commands="\n".join([
     'args.add_argument("-{short_name}", "--{argument_name}", help="{help_text}"{type_spec}{list_spec}{flag_spec})'.format(
         short_name=parameter['short_name'],
