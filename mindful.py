@@ -27,7 +27,7 @@ parser.add_argument('--delay', '-d', type=int, help="The delay between times whe
 args = parser.parse_args()
 
 if args.delay is None:
-    args.delay = 600
+    args.delay = 300
 while True:
     print(getLine())
     try:
