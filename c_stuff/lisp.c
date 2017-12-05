@@ -15,8 +15,7 @@ struct _LispParser {
     LispPair root;
     LispPair parent;
     LispPair strings;
-    void ** next_item;
-    LispPair current_list;
+    LispPair * next_list;
     enum {
         LISP_PARSER_BETWEEN_ATOMS,
         LISP_PARSER_IN_SYMBOL
@@ -43,10 +42,10 @@ LispPair lisppair_new(void * data, LispPair next)
 LispParser lispparser_new()
 {
     LispParser result = calloc(1, sizeof(struct _LispParser));
-    result->root = lisppair_new(NULL, NULL);
-    result->parent = result->root;
+    result->root = NULL;
+    result->next_list = &result->root;
+    result->parent = NULL;
     result->strings = NULL;
-    result->next_item = &(result->root->data);
     result->current_state = LISP_PARSER_BETWEEN_ATOMS;
     result->buffer_size = 64;
     result->buffer = calloc(result->buffer_size, 1);
@@ -72,16 +71,22 @@ void * lispparser_create_object(LispParser parser, const char * symbol, unsigned
     return (void *) ((unsigned long long int) result | 1);
 }
 
+void lispparser_append_item(LispParser parser, void * item)
+{
+    (*(parser->next_list)) = lisppair_new(item, NULL);
+    parser->next_list = &(parser->next_list->next);
+}
+
 void lispparser_add_new_list(LispParser parser)
 {
-    *(parser->next_item) = lisppair_new(NULL, NULL);
-    parser->parent = lisppair_new(*(parser->next_item), parser->parent);
-    parser->next_item = &(parser->parent->data);
+    LispPair old_next_list = parser->next_list;
+    lispparser_append_item(parser, lisppair_new(NULL, NULL))
+    parser->parent = lisppair_new(parser->next_list, parser->parent);
 }
 
 void lispparser_current_list_ends(LispParser parser)
 {
-    if (parser->parent->next == NULL) {
+    if (parser->parent == NULL) {
         parser->error = 1;
         return;
     }
