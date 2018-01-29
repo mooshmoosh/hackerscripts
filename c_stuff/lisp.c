@@ -198,14 +198,19 @@ LispPair lispparser_get_root(LispParser parser)
     unsigned int next_element = 0;
     while (i < parser->parsed_tree_size)
     {
-        if (parser->parsed_tree[i].type == LISPPAIR_LIST) {
+        if (parser->parsed_tree[i].type == LISPPAIR_LIST ||
+            parser->parsed_tree[i].type == LISPPAIR_QUOTED_LIST) {
             // the length of lists is stored in the value.as_int field
-            parser->result[next_element].type = LISPPAIR_LIST;
+            parser->result[next_element].type = parser->parsed_tree[i].type;
             parser->result[next_element].length = parser->parsed_tree[i].value.as_int;
             // We set the pointer to the first element of the list to null untill we load it.
             parser->result[next_element].value.as_list = NULL;
         } else {
+            parser->result[next_element].type = parser->parsed_tree[i].type;
+
+
         }
+        next_element++;
         i = parser->parsed_tree[i].next;
     }
     return parser->result;

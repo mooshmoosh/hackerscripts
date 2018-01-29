@@ -1,0 +1,23 @@
+#!/usr/bin/python3
+
+import os
+import sys
+
+files = os.listdir('.')
+file_prefix = sys.argv[1]
+
+next_file_number = 0
+
+def get_file_number(filename, prefix):
+    try:
+        return int(filename[len(prefix) + 1:-4])
+    except:
+        return -1
+
+for filename in files:
+    if filename.startswith(file_prefix) and filename.endswith('.txt'):
+        candidate_file_number = get_file_number(filename, file_prefix)
+        if candidate_file_number >= next_file_number:
+            next_file_number = candidate_file_number + 1
+
+print(file_prefix + "." + str(next_file_number) + ".txt")
