@@ -1,0 +1,40 @@
+#!/usr/bin/python3
+
+import time
+import datetime
+import argparse
+from selenium import webdriver
+
+DateString = datetime.datetime.now().strftime("%Y-%m-%%d-%H-%M-%S")
+
+args = argparse.ArgumentParser()
+args.add_argument("-u", "--url", help="The url containing the field to monitor", type=str)
+args.add_argument("-s", "--selector", help="The css selector that points to the element on the page you wish to poll", type=str)
+args.add_argument("-r", "--refresh-page", help="Refreshes the whole page to get a new value, as opposed to relying on the page to make ajax requests and update itself.", action="store_true")
+args.add_argument("-d", "--delay", help="The number of seconds to wait before getting a new value", type=float)
+args = args.parse_args()
+
+if args.url is None:
+    print("You must provide a url. Try --help")
+    exit()
+
+if args.selector is None:
+    print("You must provide a selector to monitor on the page. Try --help")
+    exit()
+
+if args.delay is None:
+    args.delay = 300
+
+firefox = webdriver.Firefox()
+try:
+    firefox.get(args.url)
+    while True:
+        element = firefox.find_element_by_css_selector(args.selector)
+        print(datetime.datetime.now().strftime('%Y-%m-%dT%H:%M:%S') + '\t' + str(element.text))
+        time.sleep(args.delay)
+        if args.refresh_page:
+            firefox.get(args.url)
+except:
+    firefox.close()
+    raise
+firefox.close()
