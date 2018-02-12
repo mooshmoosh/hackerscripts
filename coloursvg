@@ -1,0 +1,34 @@
+#!/usr/bin/python3
+
+import argparse
+import xml.etree.ElementTree as ET
+
+args = argparse.ArgumentParser()
+args.add_argument("-i", "--filename", help="The name of the svg file to colour.", type=str)
+args.add_argument("-c", "--colour", help="The colour to change all elements (paths, rectangles) to.", type=str)
+args.add_argument("-s", "--stroke-width", help="The width to set strokes to. By default it doesn't change stroke widths that have been explicitly set.", type=str)
+args.add_argument("-o", "--override-stroke-width", help="Sets all stroke widths to be the stroke-width specified, regardless if they were already set in the file.", action='store_true')
+args.add_argument("-f", "--fill-paths", help="sets the the fill attribute on paths to be the colour specified.", action='store_true')
+args = args.parse_args()
+
+def process_elements_in(root):
+    for element in root:
+        if element.tag.endswith('path'):
+            element.set('stroke', args.colour)
+            if args.stroke_width is not None:
+                if element.get('stroke-width') is None or args.override_stroke_width:
+                    element.set('stroke-width', args.stroke_width)
+            if args.fill_paths:
+                element.set('fill', args.colour)
+        elif element.tag.endswith('rect'):
+            element.set('stroke', args.colour)
+            if args.stroke_width is not None:
+                if element.get('stroke-width') is None or args.override_stroke_width:
+                    element.set('stroke-width', args.stroke_width)
+        else:
+            process_elements_in(element)
+
+tree = ET.parse(args.filename)
+root = tree.getroot()
+process_elements_in(root)
+tree.write(args.filename)
