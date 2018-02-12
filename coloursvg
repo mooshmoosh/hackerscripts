@@ -9,6 +9,8 @@ args.add_argument("-c", "--colour", help="The colour to change all elements (pat
 args.add_argument("-s", "--stroke-width", help="The width to set strokes to. By default it doesn't change stroke widths that have been explicitly set.", type=str)
 args.add_argument("-o", "--override-stroke-width", help="Sets all stroke widths to be the stroke-width specified, regardless if they were already set in the file.", action='store_true')
 args.add_argument("-f", "--fill-paths", help="sets the the fill attribute on paths to be the colour specified.", action='store_true')
+args.add_argument("-r", "--fill-rectangles", help="sets the the fill attribute on rectangles to be the colour specified.", action='store_true')
+args.add_argument("-k", "--keep-styles", help="By default we remove all style= attributes. These can override any colours that you've set. Use this option to preserve them.", action='store_true')
 args = args.parse_args()
 
 def process_elements_in(root):
@@ -20,11 +22,17 @@ def process_elements_in(root):
                     element.set('stroke-width', args.stroke_width)
             if args.fill_paths:
                 element.set('fill', args.colour)
+            if not args.keep_styles:
+                element.set('style', '')
         elif element.tag.endswith('rect'):
             element.set('stroke', args.colour)
             if args.stroke_width is not None:
                 if element.get('stroke-width') is None or args.override_stroke_width:
                     element.set('stroke-width', args.stroke_width)
+            if args.fill_rectangles:
+                element.set('fill', args.colour)
+            if not args.keep_styles:
+                element.set('style', '')
         else:
             process_elements_in(element)
 
