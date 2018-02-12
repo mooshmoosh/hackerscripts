@@ -1,5 +1,6 @@
 #!/usr/bin/python3
 
+import csv
 import time
 import datetime
 import argparse
@@ -9,9 +10,10 @@ DateString = datetime.datetime.now().strftime("%Y-%m-%%d-%H-%M-%S")
 
 args = argparse.ArgumentParser()
 args.add_argument("-u", "--url", help="The url containing the field to monitor", type=str)
-args.add_argument("-s", "--selector", help="The css selector that points to the element on the page you wish to poll", type=str)
+args.add_argument("-s", "--selector", help="The css selector that points to the element on the page you wish to poll", type=str, nargs="+")
 args.add_argument("-r", "--refresh-page", help="Refreshes the whole page to get a new value, as opposed to relying on the page to make ajax requests and update itself.", action="store_true")
 args.add_argument("-d", "--delay", help="The number of seconds to wait before getting a new value", type=float)
+args.add_argument("-o", "--output", help="The output csv file to write to. If this is blank the output will be tab separated and printed to stdout")
 args = args.parse_args()
 
 if args.url is None:
@@ -19,22 +21,34 @@ if args.url is None:
     exit()
 
 if args.selector is None:
-    print("You must provide a selector to monitor on the page. Try --help")
+    print("You must provide at least one selector to monitor on the page. Try --help")
     exit()
 
 if args.delay is None:
     args.delay = 300
 
+print(args.selector)
+
 firefox = webdriver.Firefox()
 try:
+    if args.output is not None:
+        output_file = open(args.output, 'a')
+        csv_writer = csv.writer(output_file)
     firefox.get(args.url)
     while True:
-        element = firefox.find_element_by_css_selector(args.selector)
-        print(datetime.datetime.now().strftime('%Y-%m-%dT%H:%M:%S') + '\t' + str(element.text))
+        elements = [firefox.find_element_by_css_selector(selector) for selector in args.selector]
+        if args.output is not None:
+            csv_writer.writerow([datetime.datetime.now().strftime('%Y-%m-%dT%H:%M:%S')] + [element.text for element in elements])
+        else:
+            print(datetime.datetime.now().strftime('%Y-%m-%dT%H:%M:%S') + '\t' + '\t'.join([element.text for element in elements]))
         time.sleep(args.delay)
         if args.refresh_page:
             firefox.get(args.url)
 except:
     firefox.close()
+    if args.output is not None:
+        output_file.close()
     raise
 firefox.close()
+if args.output is not None:
+    output_file.close()
