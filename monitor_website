@@ -6,8 +6,6 @@ import datetime
 import argparse
 from selenium import webdriver
 
-DateString = datetime.datetime.now().strftime("%Y-%m-%%d-%H-%M-%S")
-
 args = argparse.ArgumentParser()
 args.add_argument("-u", "--url", help="The url containing the field to monitor", type=str)
 args.add_argument("-s", "--selector", help="The css selector that points to the element on the page you wish to poll", type=str, nargs="+")
@@ -27,9 +25,9 @@ if args.selector is None:
 if args.delay is None:
     args.delay = 300
 
-print(args.selector)
-
-firefox = webdriver.Firefox()
+firefox_options = webdriver.firefox.options.Options()
+firefox_options.add_argument('-headless') # :)
+firefox = webdriver.Firefox(firefox_options=firefox_options)
 try:
     if args.output is not None:
         output_file = open(args.output, 'a')
