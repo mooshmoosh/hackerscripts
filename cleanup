@@ -1,0 +1,16 @@
+#!/bin/bash
+
+# This tells you the number of modified files:
+#    $(git status --porcelain | grep -P "^\sM" | wc -l)
+# This tells you the current branch
+#    $(git rev-parse --abbrev-ref HEAD)
+
+if [ ( $# -ge 1 ) -a ( $branch_name = "done" ) ]
+then
+    git checkout development
+    git stash pop > /dev/null
+else
+    git stash > /dev/null
+    git checkout cleanup
+    echo "Make some changes and commit them. Then run 'cleanup done'"
+fi

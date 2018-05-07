@@ -1,0 +1,28 @@
+#!/usr/bin/python3
+
+import datetime
+import os
+import sys
+
+if len(sys.argv) < 2:
+    exit()
+script_name = sys.argv[1]
+current_scripts = []
+for filename in os.listdir('.'):
+    if filename.startswith(script_name):
+        current_scripts.append(filename)
+current_scripts.sort()
+
+if len(current_scripts) == 0:
+    with open(script_name + datetime.datetime.now().strftime("_%Y-%m-%d_%H-%M-%S.sh"), 'w') as f:
+        f.write("""#!/bin/bash
+#
+# Put a quick description here about what you tried with this iteration.
+#
+""")
+else:
+    previous_script_filename = current_scripts[-1]
+    with open(previous_script_filename, 'r') as f:
+        previous_script_text = f.read()
+    with open(script_name + datetime.datetime.now().strftime("_%Y-%m-%d_%H-%M-%S.sh"), 'w') as f:
+        f.write(previous_script_text)
