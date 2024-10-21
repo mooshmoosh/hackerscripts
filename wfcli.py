@@ -34,9 +34,11 @@ class StateMachine:
                     rows = [{}]
                 else:
                     rows = self.exec_many(query)
+                previous_row = {}
                 for row in rows:
                     self.update_with_data(row)
-                    self.display(template, row)
+                    self.display(template, row, previous_row)
+                    previous_row = row
         input_text = input(">>> ")
         self.reload_state_file()
         for command in self.states[self.state].get("commands", []):
@@ -54,7 +56,13 @@ class StateMachine:
         with open(self.states_file, "r") as f:
             self.states = yaml.safe_load(f.read())
 
-    def display(self, template, data=None):
+    def display(self, template, data=None, previous_data=None):
+        if isinstance(template, str):
+            return self.display_one(template, data)
+        elif isinstance(template, dict):
+            return self.display_with_grouping(template["display"], template["groups"], data, previous_data)
+
+    def display_one(self, template, data):
         if data is None:
             data = self.data
         while True:
@@ -63,6 +71,25 @@ class StateMachine:
                 return
             except KeyError as e:
                 data[e.args[0]] = None
+
+    def display_with_grouping(self, template, groups, data, previous_data):
+        """
+        How should this work?
+        ideas:
+            groups is a list of columns to group by
+                if the column changes, then the new value is used
+                otherwise an empty string is used
+            the template object is a list of cascading objects
+                column: the column to check, if this one has changed, use
+                  display. if the column hasb't changed, move on to the next
+                  item in template
+                display: the format string to use to format data
+        """
+        new_data = data.copy()
+        for group in groups:
+            if new_data.get(group) == previous_data.get(group):
+                new_data[group] = ""
+        return self.display_one(template, new_data)
 
     def do_command(self, command, input_text):
         self.data["__input"] = input_text
@@ -83,6 +110,42 @@ class StateMachine:
                 self.write_file_command(**query)
             elif "bash" in query:
                 self.bash_command(**query)
+            elif "choices" in query:
+                self.choice_command(**query)
+
+    def choice_command(self, choices: str, format: str, display: str | None = None):
+        """
+        display some text
+        perform a query
+        display the output with an enumerated number next to each row
+        ask for input (a number)
+        use the row selected to set variables
+        """
+
+        if display is not None:
+            self.display(display)
+
+        all_rows = {}
+        for idx, row in enumerate(self.exec_many(choices)):
+            all_rows[idx] = row.copy()
+            self.update_with_data(row)
+            self.display(f"{1 + idx} " + format, row)
+
+        while True:
+            chosen = input(">>> ")
+            if chosen == "":
+                chosen = None
+                break
+            try:
+                chosen = int(chosen) - 1
+                all_rows[chosen]
+                break
+            except (KeyError, ValueError):
+                pass
+
+        if chosen is not None:
+            for key, value in all_rows[chosen].items():
+                self.data[key] = value
 
     def bash_command(self, bash: str, query=None):
         """
