@@ -80,7 +80,6 @@ review_stuff:
           display: "Which project"
         - "insert into project_notes(project, note) values(:project_id, (select note from stuff where id = :stuff_id));"
         - "update stuff set completed_at = current_timestamp where id = :stuff_id;"
-      to: project
     - command: /em
       queries:
         - choices: select id as meeting_id, datetime(created_at, 'localtime') as created_at, name from meetings order by created_at desc limit 50;
@@ -420,19 +419,7 @@ project_workflow:
     ## Next Actions:
   tables:
     - |
-      with not_done as (
-        select *
-        from tasks
-        where completed_at is NULL
-        and project = :project_id
-      ),
-      available_tasks as (
-        select t.desc as desc, blockers.id as blocker_id
-        from not_done as t
-        left join not_done as blockers
-        on t.id = blockers.blocks
-      )
-      select desc from available_tasks where blocker_id is null;
+      select desc from available_tasks where blocker_id is null and project = :project_id;
     - "    {desc}"
 
 schema:
@@ -446,3 +433,23 @@ schema:
     CREATE TABLE project_questions(id integer primary key, created_at timestamp default current_timestamp, project integer, question text, completed_at timestamp);
     CREATE TABLE project_notes(id integer primary key, created_at timestamp default current_timestamp, project integer, note text);
     CREATE TABLE question_answers(id integer primary key, created_at timestamp default current_timestamp, question integer, line text);
+    CREATE VIEW available_tasks as
+      with not_done as (
+        select *
+        from tasks
+        where completed_at is NULL
+      )
+      select
+          t.id as id,
+          t.desc as desc,
+          t.created_at as created_at,
+          t.completed_at as completed_at,
+          t.project as project,
+          t.task_type as task_type,
+          t.hide_until as hide_until,
+          t.blocks as blocks,
+          blockers.id as blocker_id
+      from not_done as t
+      left join not_done as blockers
+      on t.id = blockers.blocks
+    /* available_tasks(id,"desc",created_at,completed_at,project,task_type,hide_until,blocks,blocker_id) */;
