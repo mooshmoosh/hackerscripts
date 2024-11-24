@@ -131,6 +131,9 @@ class StateMachine:
             self.update_with_data(row)
             self.display(f"{1 + idx} " + format, row)
 
+        if len(all_rows) == 0:
+            return
+
         while True:
             chosen = input(">>> ")
             if chosen == "":
@@ -224,6 +227,25 @@ class StateMachine:
 
     def exec_one(self, query):
         cur = self.conn.cursor()
+        self.exec_query_with_missing_key_handling(cur, query)
+        row = cur.fetchone()
+        if cur.description is not None and row is not None:
+            for col, value in zip(cur.description, row):
+                self.data[col[0]] = value
+        self.conn.commit()
+
+    def exec_many(self, query):
+        cur = self.conn.cursor()
+        self.exec_query_with_missing_key_handling(cur, query)
+        if cur.description is None:
+            return
+        for row in cur.fetchall():
+            result = {}
+            for col, value in zip(cur.description, row):
+                result[col[0]] = value
+            yield result
+
+    def exec_query_with_missing_key_handling(self, cur, query):
         while True:
             try:
                 cur.execute(query, self.data)
@@ -240,26 +262,6 @@ class StateMachine:
             except:
                 print(f"Error on query: {query}")
                 raise
-        row = cur.fetchone()
-        if cur.description is not None and row is not None:
-            for col, value in zip(cur.description, row):
-                self.data[col[0]] = value
-        self.conn.commit()
-
-    def exec_many(self, query):
-        cur = self.conn.cursor()
-        try:
-            cur.execute(query, self.data)
-        except:
-            print(f"Error on query: {query}")
-            raise
-        if cur.description is None:
-            return
-        for row in cur.fetchall():
-            result = {}
-            for col, value in zip(cur.description, row):
-                result[col[0]] = value
-            yield result
 
 
 def main():

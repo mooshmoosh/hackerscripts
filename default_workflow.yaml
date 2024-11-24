@@ -215,45 +215,42 @@ project:
     /p (purpose)      Set the purpose of the project
     /o (outcome)      Set the desired outcome
     /q (question)     add a question
+    /nq               expand the next question
+    /pq               expand the previous question
     /a                answer a question
     /aa               review all answers
     /nt (todo)        add new task for this project
     /dt               mark a task as done
+    /bt               pick a task to break down into smaller tasks
+    /mt               move task to a different project
     /dl               delete a line from the notes section
     /rn (new name)    rename the project
     /b                back
-
     /d                mark this whole project as done
-
-    Or type to add notes
-
+                      type to add notes
     # {project_name} ({project_created_time})
-
     ## Purpose
     {project_purpose}
-
     ## Outcome
     {project_outcome}
-
     ## Notes
   tables:
     - select note from project_notes where project=:project_id order by created_at asc;
     - "    {note}"
     -
+    - "## Questions"
     - |
-
-      ## Questions
-    - select question from project_questions where project=:project_id and completed_at is Null;
-    - "    {question}"
-    - select question from project_questions where project=:project_id and completed_at is not Null;
-    - "    {question} (done)"
-
-
+      select
+        question,
+        case completed_at is Null when 1 then '' else '(done)' end as is_done,
+        case :question_id = id when 1 then answer_text else '' end as answer_text
+      from questions_with_answers
+      where project=:project_id
+      order by is_done, created_at asc;
+    - "    {question}{is_done}{answer_text}"
     -
-    - |
-
-      ## Next Actions
-    - select desc from tasks where project = :project_id and completed_at is Null;
+    - "## Next Actions"
+    - select desc from available_tasks where project = :project_id and completed_at is Null;
     - "    {desc}"
   commands:
     - command: /p
@@ -266,7 +263,31 @@ project:
       to: review_stuff
     - command: /q
       queries:
-        - insert into project_questions(question, project) values (:__input, :project_id);
+        - "insert into project_questions(question, project) values (:__input, :project_id);"
+    - command: /nq
+      queries:
+        - |
+          select id as question_id
+          from project_questions
+          where created_at > (
+            select created_at
+            from project_questions
+            where id = :question_id
+          )
+          order by created_at asc
+          limit 1;
+    - command: /pq
+      queries:
+        - |
+          select id as question_id
+          from project_questions
+          where created_at < (
+            select created_at
+            from project_questions
+            where id = :question_id
+          )
+          order by created_at desc
+          limit 1;
     - command: /nt
       queries:
         - insert into tasks(desc, project) values (:__input, :project_id);
@@ -275,10 +296,31 @@ project:
     - command: /dt
       queries:
         - select null as task_id;
-        - choices: select id as task_id, desc as task_description from tasks where project = :project_id and completed_at is NULL;
+        - choices: select id as task_id, desc as task_description from available_tasks where project = :project_id and completed_at is NULL;
           format: "    {task_description}"
           display: Which task is done?
         - "update tasks set completed_at = current_timestamp where id = :task_id;"
+    - command: /bt
+      to: break_down_tasks
+      queries:
+        - select null as task_to_break_down_id;
+        - choices: |
+            select
+              id as task_to_break_down_id,
+              desc as task_description
+            from available_tasks
+            where project = :project_id
+          format: "    {task_description}"
+
+    - command: /mt
+      queries:
+        - choices: "select id as moved_task_id, desc as task_description from available_tasks where project = :project_id and completed_at is NULL;"
+          display: Which task should be moved?
+          format: "    {task_description}"
+        - choices: "select id as move_to_project_id, name as move_to_project_name from projects where completed_at is Null order by created_at asc;"
+          display: Which project should this task be moved to?
+          format: "    {move_to_project_name}"
+        - "update tasks set project = :move_to_project_id where id = :moved_task_id;"
     - command: /rn
       queries:
         - "update projects set name = :__input where id = :project_id;"
@@ -306,6 +348,37 @@ project:
       to: review_stuff
     - queries:
       - insert into project_notes(project, note) values (:project_id, :__input);
+
+#######################################################################################################
+
+break_down_tasks:
+  display: |
+    # Break down task
+
+    Task:    {task_to_break_down}
+    Project: {project_name}
+
+    /b    to go back
+          or type to enter tasks
+
+    ## Sub tasks
+  queries:
+    - "select name as project_name from projects where id = :project_id;"
+    - "select desc as task_to_break_down from tasks where id = :task_to_break_down_id;"
+  tables:
+    - |
+      select
+        desc,
+        case completed_at is null when 1 then '' else ' (done)' end as is_done
+      from tasks
+      where blocks = :task_to_break_down_id
+      order by is_done, created_at asc;
+    - "    {desc}{is_done}"
+  commands:
+    - command: /b
+      to: project
+    - queries:
+      - "insert into tasks(blocks, desc, project) values (:task_to_break_down_id, :__input, :project_id)"
 
 
 #######################################################################################################
@@ -343,22 +416,11 @@ all_answers:
   display: "# Questions and their answers (/b to go back)"
   tables:
     - |
-      with all_answers as (
-        select
-          q.question as question,
-          lag(q.question) over (order by q.created_at) as prev_question,
-          a.line as line
-        from project_questions as q, question_answers as a
-        where a.question=q.id
-        and q.project = :project_id
-        order by q.id asc)
-      select
-        case question = prev_question when true then '  ' else '
-      ' || question || '
-        ' end as question_text,
-        line
-      from all_answers;
-    - "{question_text}{line}"
+      select question as question_text, answer_text
+      from questions_with_answers
+      where project = :project_id
+      order by created_at asc
+    - "    {question_text}{answer_text}"
   commands:
     - command: /b
       to: project
@@ -406,22 +468,6 @@ tasks:
           display: "Which task?"
         - "update tasks set completed_at = current_timestamp where id = :chosen_task_id;"
 
-project_workflow:
-  queries:
-    - |
-      select
-        name as project_name,
-        datetime(created_at, 'localtime') as project_created_time,
-      from projects where id = :project_id;
-  display: |
-    # {project_name} ({project_created_time})
-
-    ## Next Actions:
-  tables:
-    - |
-      select desc from available_tasks where blocker_id is null and project = :project_id;
-    - "    {desc}"
-
 schema:
   display: |
     CREATE TABLE stuff(id integer primary key, created_at timestamp default current_timestamp, note text, completed_at timestamp);
@@ -452,4 +498,25 @@ schema:
       from not_done as t
       left join not_done as blockers
       on t.id = blockers.blocks
-    /* available_tasks(id,"desc",created_at,completed_at,project,task_type,hide_until,blocks,blocker_id) */;
+      where blocker_id is NULL;
+    CREATE VIEW questions_with_answers as
+      with answer_text as (
+        select question as question_id,
+        coalesce('
+          ' || string_agg(line, '
+          '), '') as answer_text
+        from question_answers
+        group by question_id
+        order by created_at asc
+      )
+      select
+          pq.id as id,
+          pq.created_at as created_at,
+          pq.completed_at as completed_at,
+          pq.project as project,
+          pq.question as question,
+          coalesce(at.answer_text, '') as answer_text
+      from project_questions as pq
+          left join answer_text as at
+          on pq.id = at.question_id
+      order by created_at asc;
