@@ -222,6 +222,7 @@ project:
     /nt (todo)        add new task for this project
     /dt               mark a task as done
     /bt               pick a task to break down into smaller tasks
+    /db               pick a task that must be done before another one
     /mt               move task to a different project
     /dl               delete a line from the notes section
     /rn (new name)    rename the project
@@ -311,7 +312,28 @@ project:
             from available_tasks
             where project = :project_id
           format: "    {task_description}"
-
+    - command: /db
+      queries:
+        - select null as task_to_be_done_before_id;
+        - choices: |
+            select
+              id as task_to_be_done_before_id,
+              desc as task_description
+            from available_tasks
+            where project = :project_id
+          format: "    {task_description}"
+          display: Which task must be done first?
+        - select null as task_to_be_done_after_id;
+        - choices: |
+            select
+              id as task_to_be_done_after_id,
+              desc as task_description
+            from available_tasks
+            where project = :project_id
+            and id <> task_to_be_done_before_id
+          format: "    {task_description}"
+          display: Which task depends on this task?
+        - "update tasks set blocks = :task_to_be_done_after_id where id = :task_to_be_done_before_id"
     - command: /mt
       queries:
         - choices: "select id as moved_task_id, desc as task_description from available_tasks where project = :project_id and completed_at is NULL;"
