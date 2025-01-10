@@ -330,13 +330,13 @@ project:
               desc as task_description
             from available_tasks
             where project = :project_id
-            and id <> task_to_be_done_before_id
+            and id <> :task_to_be_done_before_id
           format: "    {task_description}"
           display: Which task depends on this task?
         - "update tasks set blocks = :task_to_be_done_after_id where id = :task_to_be_done_before_id"
     - command: /mt
       queries:
-        - choices: "select id as moved_task_id, desc as task_description from available_tasks where project = :project_id and completed_at is NULL;"
+        - choices: "select id as moved_task_id, desc as task_description from available_tasks where project = :project_id;"
           display: Which task should be moved?
           format: "    {task_description}"
         - choices: "select id as move_to_project_id, name as move_to_project_name from projects where completed_at is Null order by created_at asc;"
@@ -377,9 +377,12 @@ break_down_tasks:
   display: |
     # Break down task
 
-    Task:    {task_to_break_down}
-    Project: {project_name}
+    Task:     {task_to_break_down}
+    Project:  {project_name}
+    template: {task_description_prefix}...{task_description_suffix}
 
+    /ts   (suffix) set a suffix for the task description template
+    /tp   (prefix) set a prefix for the task description template
     /b    to go back
           or type to enter tasks
 
@@ -387,6 +390,7 @@ break_down_tasks:
   queries:
     - "select name as project_name from projects where id = :project_id;"
     - "select desc as task_to_break_down from tasks where id = :task_to_break_down_id;"
+    - "select coalesce(:task_description_prefix, '') as task_description_prefix, coalesce(:task_description_suffix, '') as task_description_suffix;"
   tables:
     - |
       select
@@ -399,8 +403,14 @@ break_down_tasks:
   commands:
     - command: /b
       to: project
+    - command: /ts
+      queries:
+      - "select :__input as task_description_suffix;"
+    - command: /tp
+      queries:
+      - "select :__input as task_description_prefix;"
     - queries:
-      - "insert into tasks(blocks, desc, project) values (:task_to_break_down_id, :__input, :project_id)"
+      - "insert into tasks(blocks, desc, project) values (:task_to_break_down_id, :task_description_prefix || :__input || :task_description_suffix, :project_id)"
 
 
 #######################################################################################################
@@ -453,7 +463,7 @@ all_answers:
 
 tasks:
   display: |
-    # Tasks (/b go back, /dt mark one as done)
+    # Tasks (/b go back, /dt mark one as done, /mt move to project)
   tables:
     - |
       select
@@ -489,6 +499,16 @@ tasks:
           format: "{chosen_task_description}"
           display: "Which task?"
         - "update tasks set completed_at = current_timestamp where id = :chosen_task_id;"
+    - command: /mt
+      queries:
+        - "select null as moved_task_id;"
+        - choices: "select id as moved_task_id, desc as task_description from tasks where project is null and completed_at is NULL;"
+          display: Which task should be moved?
+          format: "    {task_description}"
+        - choices: "select id as move_to_project_id, name as move_to_project_name from projects where completed_at is Null order by created_at asc;"
+          display: Which project should this task be moved to?
+          format: "    {move_to_project_name}"
+        - "update tasks set project = :move_to_project_id where id = :moved_task_id;"
 
 schema:
   display: |
