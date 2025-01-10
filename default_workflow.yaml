@@ -1,564 +1,153 @@
-review_stuff:
-  queries:
-    - "select id as stuff_id from stuff where completed_at is NULL order by created_at asc limit 1;"
-    - "select count(*) as unprocessed_meeting_count from meetings where archived_at is null;"
-    - |
-      with all_project_tasks as (
-        select projects.id  as project_id, tasks.id as task_id
-        from projects left join tasks
-        on projects.id = tasks.project
-        where tasks.completed_at is NULL
-      )
-      select count(*) as projects_without_next_actions from
-      all_project_tasks
-      where task_id is null;
-    - |
-      select
-        projects.id as project_id_without_next_action,
-        projects.name as project_name_without_next_action
-      from projects left join tasks
-      on projects.id = tasks.project
-      where tasks.id is NULL
-      and projects.completed_at is NULL
-      order by projects.created_at asc
-      limit 1;
-    - |
-      select
-        id as meeting_id_with_unprocessed_notes,
-        name as meeting_name_with_unprocessed_notes
-      from meetings where archived_at is NULL
-      order by created_at asc
-      limit 1;
+current_tasks:
   display: |
-    # Sufff
+    # To do
 
-    Commands are run on the first item.
-      /tv                   go to tasks view
-      /t (description)      create a task with description, and mark this piece of stuff as done
-      /nt                   create a new task
-      /p                    Pick a project to open
-      /np (project name)    create a new project with name
-      /pn                   this is a note that should be added to a project
-      /m (title)            start taking notes for a meeting
-      /em                   pick a meeting to view/add notes for
-      /qa (question)        this note is the answer to a question, but not tied to a project
-      /d                    Mark the top note as done
+    Commands:
+      Switch a project to be top priority
+      Add a new task (Quick)
+        question
+        general task
+      Add a new task (Detailed)
+      Add a new project
+      Task is done
+      Start task
+      Switch a task to a different project
+      Start taking notes
+      Search for questions
+      Search through notes
 
-    There are {unprocessed_meeting_count} meeting notes that haven't been processed
-      one is "{meeting_name_with_unprocessed_notes}" (/rm to review this meeting)
-    There are {projects_without_next_actions} projects without a next action
-      one is "{project_name_without_next_action}" (/rp to review this project)
+
   tables:
-    - "select note from stuff where completed_at is NULL order by created_at asc;"
-    - "    {note}"
+    - "select desc, short_task_type, project_name from available_tasks;"
+    - "  {desc} ({short_task_type}) - {project_name}"
   commands:
-    - command: /tv
-      to: tasks
-    - command: /t
+    - command: ""
+      to: ""
       queries:
-        - "insert into tasks (desc) values (:__input);"
-        - "update stuff set completed_at = current_timestamp where id = :stuff_id;"
-    - command: /nt
-      queries:
-        - "select NULL as project_name, null as task_type_name, null as desc, null as hide_until;"
-      to: new_task
-    - command: /p
-      queries:
-        - "select null as project_id;"
-        - choices: "select id as project_id, name from projects where completed_at is NULL;"
-          format: "{name}"
-          display: "Which project"
-      to: project
-    - command: /np
-      queries:
-        - insert into projects(name) values(:__input) returning id as project_id;
-      to: project
-    - command: /pn
-      queries:
-        - choices: "select id as project_id, name from projects where completed_at is NULL;"
-          format: "{name}"
-          display: "Which project"
-        - "insert into project_notes(project, note) values(:project_id, (select note from stuff where id = :stuff_id));"
-        - "update stuff set completed_at = current_timestamp where id = :stuff_id;"
-    - command: /em
-      queries:
-        - choices: select id as meeting_id, datetime(created_at, 'localtime') as created_at, name from meetings order by created_at desc limit 50;
-          format: "{name} ({created_at})"
-          display: "Pick the meeting to add notes to"
-      to: meeting_notes
-    - command: /rm
-      queries:
-        - select :meeting_id_with_unprocessed_notes as meeting_id;
-      to: meeting_notes
-    - command: /rp
-      queries:
-        - select :project_id_without_next_action as project_id;
-      to: project
-    - command: /qa
-      queries:
-        - "insert into project_questions(question) values(:__input) returning id as question_id;"
-        - "insert into question_answers(question, line) values(:question_id, (select note from stuff where id = :stuff_id));"
-        - "update stuff set completed_at=current_timestamp where id = :stuff_id;"
-    - command: /m
-      to: meeting_notes
-      queries:
-        - insert into meetings(name) values (:__input) returning id as meeting_id;
-    - command: /d
-      queries:
-        - "update stuff set completed_at = current_timestamp where id = :stuff_id;"
-    - command: /b
-      to: review_stuff
-    - queries:
-      - "insert into stuff(note) values (:__input);"
+        - ""
 
-
-
-#######################################################################################################
-
-new_task:
-  display: |
-    # New task (/b back)
-
-    (P)roject:      {project_name}
-    (T)ype:         {task_type_name}
-    (D)escription:  {desc}
-    (H)ide until:   {hide_until}
-
-    enter c to create this task
-    hide until can take a datetime or:
-      - tomorrow
-      - mon-sun
-      - next week
-
-  commands:
-    - command: p
-      queries:
-        - choices: "select id as project_id, name as project_name, datetime(created_at, 'localtime') as project_created_date from projects where completed_at is NULL order by created_at desc;"
-          format: "{project_name} ({project_created_date})"
-    - command: t
-      queries:
-        - choices: 'select id as task_type, name as task_type_name from task_types;'
-          format: "{task_type_name}"
-    - command: d
-      queries:
-        - "select :__input as desc;"
-    - command: h
-      queries:
-        - |
-          select
-            case :__input
-              when 'tomorrow' then datetime('now', 'start of day', '+1 day', '+6 hours')
-              when 'mon' then datetime('now', 'start of day', '+1 day', 'weekday 1', '+6 hours')
-              when 'tue' then datetime('now', 'start of day', '+1 day', 'weekday 2', '+6 hours')
-              when 'wed' then datetime('now', 'start of day', '+1 day', 'weekday 3', '+6 hours')
-              when 'thu' then datetime('now', 'start of day', '+1 day', 'weekday 4', '+6 hours')
-              when 'fri' then datetime('now', 'start of day', '+1 day', 'weekday 5', '+6 hours')
-              when 'sat' then datetime('now', 'start of day', '+1 day', 'weekday 6', '+6 hours')
-              when 'sun' then datetime('now', 'start of day', '+1 day', 'weekday 0', '+6 hours')
-              else datetime(:__input, 'utc')
-            end as hide_until;
-    - command: c
-      queries:
-        - "insert into tasks(project, task_type, desc, hide_until) values(:project_id, :task_type, :desc, :hide_until);"
-      to: review_stuff
-    - command: /b
-      to: review_stuff
-
-
-#######################################################################################################
-
-meeting_notes:
-  queries:
-    - select name as meeting_name, datetime(created_at, 'localtime') as meeting_time from meetings where id = :meeting_id;
-  display: |
-    # {meeting_name} ({meeting_time})
-    /b to go back, /d to archive these notes, /pn (note) add a new note to a project /nt (task) to add a new task to project, /p switch project
-    Current project: {project_name}
-  tables:
-    - select line from meeting_notes where meeting=:meeting_id order by created_at;
-    - "    {line}"
-  commands:
-    - command: /b
-      to: review_stuff
-    - command: /p
-      queries:
-        - "select null as project_id;"
-        - choices: "select id as project_id, name as project_name from projects where completed_at is NULL;"
-          format: "{project_name}"
-          display: "Which project"
-    - command: /nt
-      queries:
-        - insert into tasks(desc, project) values (:__input, :project_id);
-    - command: /pn
-      queries:
-        - insert into project_notes(project, note) values (:project_id, :__input);
-    - command: /d
-      queries:
-        - update meetings set archived_at = current_timestamp where id = :meeting_id;
-      to: review_stuff
-    - queries:
-      - insert into meeting_notes(meeting, line) values (:meeting_id, :__input);
-
-
-#######################################################################################################
-
-project:
-  queries:
-    - |
-      select
-        name as project_name,
-        datetime(created_at, 'localtime') as project_created_time,
-        coalesce(purpose, '') as project_purpose,
-        coalesce(outcome, '') as project_outcome
-      from projects where id = :project_id;
-  display: |
-    /p (purpose)      Set the purpose of the project
-    /o (outcome)      Set the desired outcome
-    /q (question)     add a question
-    /nq               expand the next question
-    /pq               expand the previous question
-    /a                answer a question
-    /aa               review all answers
-    /nt (todo)        add new task for this project
-    /dt               mark a task as done
-    /bt               pick a task to break down into smaller tasks
-    /db               pick a task that must be done before another one
-    /mt               move task to a different project
-    /dl               delete a line from the notes section
-    /rn (new name)    rename the project
-    /b                back
-    /d                mark this whole project as done
-                      type to add notes
-    # {project_name} ({project_created_time})
-    ## Purpose
-    {project_purpose}
-    ## Outcome
-    {project_outcome}
-    ## Notes
-  tables:
-    - select note from project_notes where project=:project_id order by created_at asc;
-    - "    {note}"
-    -
-    - "## Questions"
-    - |
-      select
-        question,
-        case completed_at is Null when 1 then '' else '(done)' end as is_done,
-        case :question_id = id when 1 then answer_text else '' end as answer_text
-      from questions_with_answers
-      where project=:project_id
-      order by is_done, created_at asc;
-    - "    {question}{is_done}{answer_text}"
-    -
-    - "## Next Actions"
-    - select desc from available_tasks where project = :project_id and completed_at is Null;
-    - "    {desc}"
-  commands:
-    - command: /p
-      queries:
-        - "update projects set purpose=:__input where id=:project_id;"
-    - command: /o
-      queries:
-        - "update projects set outcome=:__input where id=:project_id;"
-    - command: /b
-      to: review_stuff
-    - command: /q
-      queries:
-        - "insert into project_questions(question, project) values (:__input, :project_id);"
-    - command: /nq
-      queries:
-        - |
-          select id as question_id
-          from project_questions
-          where created_at > (
-            select created_at
-            from project_questions
-            where id = :question_id
-          )
-          order by created_at asc
-          limit 1;
-    - command: /pq
-      queries:
-        - |
-          select id as question_id
-          from project_questions
-          where created_at < (
-            select created_at
-            from project_questions
-            where id = :question_id
-          )
-          order by created_at desc
-          limit 1;
-    - command: /nt
-      queries:
-        - insert into tasks(desc, project) values (:__input, :project_id);
-    - command: /aa
-      to: all_answers
-    - command: /dt
-      queries:
-        - select null as task_id;
-        - choices: select id as task_id, desc as task_description from available_tasks where project = :project_id and completed_at is NULL;
-          format: "    {task_description}"
-          display: Which task is done?
-        - "update tasks set completed_at = current_timestamp where id = :task_id;"
-    - command: /bt
-      to: break_down_tasks
-      queries:
-        - select null as task_to_break_down_id;
-        - choices: |
-            select
-              id as task_to_break_down_id,
-              desc as task_description
-            from available_tasks
-            where project = :project_id
-          format: "    {task_description}"
-    - command: /db
-      queries:
-        - select null as task_to_be_done_before_id;
-        - choices: |
-            select
-              id as task_to_be_done_before_id,
-              desc as task_description
-            from available_tasks
-            where project = :project_id
-          format: "    {task_description}"
-          display: Which task must be done first?
-        - select null as task_to_be_done_after_id;
-        - choices: |
-            select
-              id as task_to_be_done_after_id,
-              desc as task_description
-            from available_tasks
-            where project = :project_id
-            and id <> :task_to_be_done_before_id
-          format: "    {task_description}"
-          display: Which task depends on this task?
-        - "update tasks set blocks = :task_to_be_done_after_id where id = :task_to_be_done_before_id"
-    - command: /mt
-      queries:
-        - choices: "select id as moved_task_id, desc as task_description from available_tasks where project = :project_id;"
-          display: Which task should be moved?
-          format: "    {task_description}"
-        - choices: "select id as move_to_project_id, name as move_to_project_name from projects where completed_at is Null order by created_at asc;"
-          display: Which project should this task be moved to?
-          format: "    {move_to_project_name}"
-        - "update tasks set project = :move_to_project_id where id = :moved_task_id;"
-    - command: /rn
-      queries:
-        - "update projects set name = :__input where id = :project_id;"
-    - command: /a
-      queries:
-        - choices: |
-              select
-                id as question_id,
-                question
-              from project_questions
-              where project = :project_id
-              and completed_at is NULL;
-          format: "  {question}"
-          display: "Which question do you have an answer for?"
-      to: answer_question
-    - command: /dl
-      queries:
-        - choices: select id as note_id, note as chosen_line from project_notes where project = :project_id;
-          format: "  {chosen_line}"
-          display: Which line to delete?
-        - "delete from project_notes where id = :note_id;"
-    - command: /d
-      queries:
-        - "update projects set completed_at = current_timestamp where id = :project_id;"
-      to: review_stuff
-    - queries:
-      - insert into project_notes(project, note) values (:project_id, :__input);
-
-#######################################################################################################
-
-break_down_tasks:
-  display: |
-    # Break down task
-
-    Task:     {task_to_break_down}
-    Project:  {project_name}
-    template: {task_description_prefix}...{task_description_suffix}
-
-    /ts   (suffix) set a suffix for the task description template
-    /tp   (prefix) set a prefix for the task description template
-    /b    to go back
-          or type to enter tasks
-
-    ## Sub tasks
-  queries:
-    - "select name as project_name from projects where id = :project_id;"
-    - "select desc as task_to_break_down from tasks where id = :task_to_break_down_id;"
-    - "select coalesce(:task_description_prefix, '') as task_description_prefix, coalesce(:task_description_suffix, '') as task_description_suffix;"
-  tables:
-    - |
-      select
-        desc,
-        case completed_at is null when 1 then '' else ' (done)' end as is_done
-      from tasks
-      where blocks = :task_to_break_down_id
-      order by is_done, created_at asc;
-    - "    {desc}{is_done}"
-  commands:
-    - command: /b
-      to: project
-    - command: /ts
-      queries:
-      - "select :__input as task_description_suffix;"
-    - command: /tp
-      queries:
-      - "select :__input as task_description_prefix;"
-    - queries:
-      - "insert into tasks(blocks, desc, project) values (:task_to_break_down_id, :task_description_prefix || :__input || :task_description_suffix, :project_id)"
-
-
-#######################################################################################################
-
-answer_question:
-  queries:
-    - select question from project_questions where id=:question_id;
-  display: |
-    (/b back, /d mark it as answered, /de delete last line, /q to change the question being asked)
-
-    {question}
-  tables:
-    - select line from question_answers where question=:question_id;
-    - "    {line}"
-  commands:
-    - command: /b
-      to: project
-    - command: /d
-      queries:
-        - update project_questions set completed_at = current_timestamp where id = :question_id;
-      to: project
-    - command: /q
-      queries:
-        - update project_questions set question=:__input where id = :question_id;
-    - command: /de
-      queries:
-        - "delete from question_answers where id=(select id from question_answers where question=:question_id order by created_at desc limit 1)"
-    - queries:
-      - insert into question_answers(line, question) values (:__input, :question_id);
-
-
-#######################################################################################################
-
-all_answers:
-  display: "# Questions and their answers (/b to go back)"
-  tables:
-    - |
-      select question as question_text, answer_text
-      from questions_with_answers
-      where project = :project_id
-      order by created_at asc
-    - "    {question_text}{answer_text}"
-  commands:
-    - command: /b
-      to: project
-
-
-#######################################################################################################
-
-
-tasks:
-  display: |
-    # Tasks (/b go back, /dt mark one as done, /mt move to project)
-  tables:
-    - |
-      select
-        '
-      ' || coalesce(p.name, '(No project)') || '
-      ' as project_name,
-        case t.task_type is NULL when true then '' else '('||t.task_type||')' end as task_type,
-        t.desc as task_desc
-      from tasks as t
-      left join projects as p
-        on t.project=p.id
-      where t.completed_at is NULL
-        and (t.hide_until is NULL or t.hide_until < current_timestamp)
-      order by p.created_at desc nulls first, t.created_at desc
-    - display: "{project_name}    {task_desc} {task_type}"
-      groups:
-        - "project_name"
-  commands:
-    - command: /b
-      to: review_stuff
-    - command: /dt
-      queries:
-        - choices: |
-            select
-              t.id as chosen_task_id,
-              t.desc as chosen_task_description
-            from tasks as t
-            left join projects as p
-              on t.project=p.id
-            where t.completed_at is NULL
-              and (t.hide_until is NULL or t.hide_until < current_timestamp)
-            order by p.created_at desc nulls first, t.created_at desc
-          format: "{chosen_task_description}"
-          display: "Which task?"
-        - "update tasks set completed_at = current_timestamp where id = :chosen_task_id;"
-    - command: /mt
-      queries:
-        - "select null as moved_task_id;"
-        - choices: "select id as moved_task_id, desc as task_description from tasks where project is null and completed_at is NULL;"
-          display: Which task should be moved?
-          format: "    {task_description}"
-        - choices: "select id as move_to_project_id, name as move_to_project_name from projects where completed_at is Null order by created_at asc;"
-          display: Which project should this task be moved to?
-          format: "    {move_to_project_name}"
-        - "update tasks set project = :move_to_project_id where id = :moved_task_id;"
 
 schema:
   display: |
-    CREATE TABLE stuff(id integer primary key, created_at timestamp default current_timestamp, note text, completed_at timestamp);
-    CREATE TABLE meetings(id integer primary key, name text, created_at timestamp default current_timestamp, archived_at timestamp);
-    CREATE TABLE meeting_notes(id integer primary key, meeting integer, created_at timestamp default current_timestamp, line text);
-    CREATE TABLE tasks(id integer primary key, created_at timestamp default current_timestamp, completed_at timestamp, project integer, task_type integer, desc text, hide_until timestamp, blocks integer);
-    CREATE TABLE task_types(id integer primary key, name text);
-    CREATE TABLE projects(id integer primary key, created_at timestamp default current_timestamp, completed_at timestamp, name text, purpose text, outcome text);
-    CREATE TABLE project_questions(id integer primary key, created_at timestamp default current_timestamp, project integer, question text, completed_at timestamp);
-    CREATE TABLE project_notes(id integer primary key, created_at timestamp default current_timestamp, project integer, note text);
-    CREATE TABLE question_answers(id integer primary key, created_at timestamp default current_timestamp, question integer, line text);
+    CREATE TABLE tasks(
+      id integer primary key,
+      desc text,
+      project integer,
+      task_type integer,
+      created_at timestamp default current_timestamp,
+      hide_until timestamp,
+      completed_at timestamp);
+
+    CREATE TABLE blocks(
+      id integer primary key,
+      blocked integer,
+      blocker integer);
+
+    CREATE TABLE task_types(
+      id integer primary key,
+      short_name text,
+      name text);
+
+    insert into task_types(short_name, name) values ('P', 'Project');
+    insert into task_types(short_name, name) values ('WF', 'Waiting For');
+    insert into task_types(short_name, name) values ('R', 'Review Notes');
+    insert into task_types(short_name, name) values ('Q', 'Question');
+    insert into task_types(short_name, name) values ('T', 'General Task');
+
+    CREATE TABLE projects(
+      id integer primary key,
+      created_at timestamp default current_timestamp,
+      name text
+      template integer,
+      priority integer);
+
+    CREATE TABLE meetings(
+      id integer primary key,
+      created_at timestamp default current_timestamp,
+      archived_at timestamp default current_timestamp,
+      name text);
+
+    CREATE TABLE meeting_notes(
+      id integer primary key,
+      created_at timestamp default current_timestamp,
+      line text);
+
+    CREATE TABLE question_answers(
+      id integer primary key,
+      question integer,
+      line text);
+
+
     CREATE VIEW available_tasks as
-      with not_done as (
-        select *
-        from tasks
+      with undone_unsnoozed_tasks as (
+        select
+          t.desc
+        from tasks as t
         where completed_at is NULL
+        and (hide_until is NULL or hide_until < current_timestamp)
+      ),
+      blocked_by as (
+        select
+          b.blocked,
+          b.blocker,
+          t.completed_at
+        from blocks as b
+        inner join tasks as t on t.id = b.blocker
+        where t.completed_at is null
+        union
+        select t2.project, t2.id, t2.completed_at
+        where t2.completed_at is null
+        and t2.project is not null
       )
       select
-          t.id as id,
-          t.desc as desc,
-          t.created_at as created_at,
-          t.completed_at as completed_at,
-          t.project as project,
-          t.task_type as task_type,
-          t.hide_until as hide_until,
-          t.blocks as blocks,
-          blockers.id as blocker_id
-      from not_done as t
-      left join not_done as blockers
-      on t.id = blockers.blocks
-      where blocker_id is NULL;
-    CREATE VIEW questions_with_answers as
-      with answer_text as (
-        select question as question_id,
-        coalesce('
-          ' || string_agg(line, '
-          '), '') as answer_text
-        from question_answers
-        group by question_id
-        order by created_at asc
-      )
+        t.id as id,
+        t.desc as desc,
+        t.project as project_id,
+        p.name as project_name,
+        t.task_type as task_type_id,
+        tt.short_name as short_task_type,
+        t.created_at,
+        t.hide_until,
+        t.completed_at
+      from undone_unsnoozed_tasks as t
+      left join blocked_by as b on t.id = b.blocked
+      left join projects as p on t.project = p.id
+      left join task_types as tt on t.task_type = tt.id
+      where b.blocker is null
+      order by coalesce(p.priority, 1) asc, p.id desc, t.created_at desc;
+
+    CREATE TABLE project_templates(
+      id integer primary key,
+      name text,
+      project_name text,
+      created_at timestamp default current_timestamp);
+
+    CREATE TABLE project_template_fields(
+      id integer primary key,
+      name text);
+
+    CREATE TABLE project_data(
+      id integer primary key,
+      project integer,
+      field integer,
+      value text);
+
+    CREATE TABLE project_template_tasks(
+      id integer primary key,
+      template integer,
+      task_desc text,
+      format_field integer,
+      task_type integer);
+
+    CREATE VIEW generated_project_tasks as
       select
-          pq.id as id,
-          pq.created_at as created_at,
-          pq.completed_at as completed_at,
-          pq.project as project,
-          pq.question as question,
-          coalesce(at.answer_text, '') as answer_text
-      from project_questions as pq
-          left join answer_text as at
-          on pq.id = at.question_id
-      order by created_at asc;
+        format(tt.task_desc, pd.value) as desc,
+        p.id as project,
+        tt.task_type as task_type
+      from project_template_task as tt
+      inner join projects as p
+        on p.template = tt.template
+      left join project_data as pd
+        on tt.format_field = pd.field
+        and p.id = pd.project;
+
