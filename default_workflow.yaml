@@ -3,34 +3,138 @@ current_tasks:
     # To do
 
     Commands:
-      Switch a project to be top priority
+      /p Switch a project to be top priority
+      /os Organize stuff / switch to no project
+      /q add a question
       Add a new task (Quick)
-        question
-        general task
-      Add a new task (Detailed)
-      Add a new project
-      Task is done
-      Start task
-      Switch a task to a different project
+      /mt modify a task
+      /dt Task is done
       Start taking notes
+        TODO: We need do update the scheuma to store notes in a FTS table
+        We need to be able to search the text and also questions and meeting titles
+        search for notes needs to give the question or neeting it came from
       Search for questions
       Search through notes
-
+      snooze a task till tomorrow
+      snooze a task till next week
+      modify project template
+      apply a template of tasks to a project
+      bump a project to be last
+      Start task
 
   tables:
-    - "select desc, short_task_type, project_name from available_tasks;"
+    - |
+      select
+        desc,
+        short_task_type,
+        project_name
+      from available_tasks;
     - "  {desc} ({short_task_type}) - {project_name}"
   commands:
-    - command: ""
-      to: ""
+    - command: "/p"
+      to: "current_tasks"
       queries:
-        - ""
-
+        - choices: |
+            select
+              id as project_id, 
+              name as project_name
+            from active_projects;
+          format: "{project_name}"
+          display: "Which project"
+        - |
+          update projects
+          set priority = priority + 2
+          where id in (
+            select id from active_projects
+          );
+        - |
+          update projects
+          set priority = 0
+          where id = :project_id
+    - command: "/os"
+      to: "current_tasks"
+      queries:
+        - |
+          update projects
+          set priority = priority + 2
+          where id in (
+            select id from active_projects
+          )
+        - "select null as :project_id;"
+        - "select null as :project_name;"
+    - command: "/q"
+      to: "current_tasks"
+      queries:
+        - |
+          insert into tasks(desc, task_type, project)
+          values (
+            :__input,
+            (
+              select id
+              from task_types
+              where short_name = 'Q'
+            ),
+            :project_id
+          );
+    - command: "/mt"
+      to: "modify_task"
+      queries:
+        - choices: |
+            select
+              id as task_id,
+              desc,
+              short_task_type,
+              project_id,
+              project_name
+            from available_tasks
+            limit 100;
+          format: "{desc} ({short_task_type}) - {project_name}"
+          display: "which task?"
+    - command: "/dt"
+      to: "current_tasks"
+      queries:
+        - choices: |
+            select
+              id as task_id,
+              desc,
+              short_task_type,
+              project_id,
+              project_name
+            from available_tasks
+            limit 100;
+          format: "{desc} ({short_task_type}) - {project_name}"
+          display: "which task?"
+        - "update tasks set completed_at = current_timestamp where id = task_id;"
+    - to: "current_tasks"
+      queries:
+        - |
+          insert into tasks(desc, project, task_type)
+          values (
+            :__input,
+            :project_id,
+            (
+              select id
+              from task_types
+              where short_name = 'S'
+            )
+          );
+modify_task:
+  display: |
+    # Modify task
+    
+    commands:
+      this is a project
+      this is a question for an existing project
+      this is a task on a project
+      this is a piece of data for a project
+    
+    description: {desc}
 
 schema:
   display: |
     CREATE TABLE tasks(
       id integer primary key,
+      source integer,
       desc text,
       project integer,
       task_type integer,
@@ -46,37 +150,56 @@ schema:
     CREATE TABLE task_types(
       id integer primary key,
       short_name text,
-      name text);
+      name text,
+      workflow text);
 
-    insert into task_types(short_name, name) values ('P', 'Project');
-    insert into task_types(short_name, name) values ('WF', 'Waiting For');
-    insert into task_types(short_name, name) values ('R', 'Review Notes');
-    insert into task_types(short_name, name) values ('Q', 'Question');
-    insert into task_types(short_name, name) values ('T', 'General Task');
+    insert into task_types(short_name, name, workflow)
+     values ('P', 'Project', 'modify_project');
+    insert into task_types(short_name, name)
+     values ('WF', 'Waiting For');
+    insert into task_types(short_name, name, workflow)
+     values ('R', 'Review Notes', 'edit_notes');
+    insert into task_types(short_name, name)
+     values ('Q', 'Question');
+    insert into task_types(short_name, name)
+     values ('T', 'General Task');
+    insert into task_types(short_name, name)
+     values ('S', 'Stuff');
 
     CREATE TABLE projects(
       id integer primary key,
       created_at timestamp default current_timestamp,
       name text
       template integer,
-      priority integer);
+      priority integer not null default 2);
+
+    CREATE VIEW active_projects as
+      with undone_task_count as (
+        select
+          count(*) as tc,
+          project as project
+        from tasks
+        group by project
+        where completed_at is null
+      )
+      select
+        p.id,
+        p.created_at,
+        p.name,
+        p.template,
+        p.priority
+      from projects as p
+      inner join undone_task_count as t
+      on p.id = t.project
+      where t.tc > 0;
 
     CREATE TABLE meetings(
       id integer primary key,
-      created_at timestamp default current_timestamp,
-      archived_at timestamp default current_timestamp,
       name text);
 
-    CREATE TABLE meeting_notes(
+    CREATE TABLE notes(
       id integer primary key,
-      created_at timestamp default current_timestamp,
-      line text);
-
-    CREATE TABLE question_answers(
-      id integer primary key,
-      question integer,
-      line text);
-
+      note text);
 
     CREATE VIEW available_tasks as
       with undone_unsnoozed_tasks as (
@@ -139,8 +262,14 @@ schema:
       format_field integer,
       task_type integer);
 
+    CREATE TABLE project_template_task_links(
+      id integer primary key,
+      blocked integer,
+      blocker integer);
+
     CREATE VIEW generated_project_tasks as
       select
+        tt.id as source,
         format(tt.task_desc, pd.value) as desc,
         p.id as project,
         tt.task_type as task_type
@@ -150,4 +279,18 @@ schema:
       left join project_data as pd
         on tt.format_field = pd.field
         and p.id = pd.project;
+
+    CREATE VIEW generated_project_links as
+      select
+        t1.project as project_id,
+        t1.id as blocker,
+        t2.id as blocked
+      from
+        tasks as t1,
+        tasks as t2,
+        project_template_task_links as ptl,
+      where t1.source = ptl.blocker
+      and t2.source = ptl.blocked
+      and t1.project = t2.project;
+
 
