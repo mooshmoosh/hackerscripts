@@ -5,6 +5,11 @@ import os
 import yaml
 import sqlite3
 import readline
+import traceback
+
+
+class BreakProcedureLoop(Exception):
+    pass
 
 
 class StateMachine:
@@ -25,7 +30,10 @@ class StateMachine:
             self.state = next(iter(self.states.keys()))
         os.system("clear")
         for query in self.states[self.state].get("queries", []):
-            self.perform_query(query)
+            try:
+                self.perform_query(query)
+            except BreakProcedureLoop:
+                break
         self.display(self.states[self.state].get("display", ""))
         if "tables" in self.states[self.state]:
             tables = self.states[self.state]["tables"]
@@ -94,11 +102,13 @@ class StateMachine:
     def do_command(self, command, input_text):
         self.data["__input"] = input_text
         for query in command.get("queries", []):
-            self.perform_query(query)
+            try:
+                self.perform_query(query)
+            except BreakProcedureLoop:
+                break
         next_state = command.get("to", self.state)
-        if next_state == "__next":
-            next_state = self.data.get("__next", self.state)
-            del self.data["__next"]
+        if next_state == "__next" and "__next" in self.data:
+            next_state = self.data.pop("__next")
         if next_state in self.states:
             self.state = next_state
 
@@ -112,6 +122,50 @@ class StateMachine:
                 self.bash_command(**query)
             elif "choices" in query:
                 self.choice_command(**query)
+            elif "select_from" in query:
+                self.multi_choice_command(**query)
+
+    def multi_choice_command(self, select_from: str, query: str, format: str, display: str | None = None):
+        """
+        display some text
+        perform a query
+        display the output with an enumerated number next to each row
+        ask for input (space separated list of numbers)
+        perform a query using each of the selected options
+        """
+        if display is not None:
+            self.display(display)
+
+        all_rows = {}
+        try:
+            for idx, row in enumerate(self.exec_many(select_from)):
+                all_rows[idx] = row.copy()
+                self.update_with_data(row)
+                self.display(f"{1 + idx} " + format, row)
+        except sqlite3.OperationalError:
+            print(traceback.format_exc())
+            input("(Error raised, hit enter)")
+            raise BreakProcedureLoop()
+
+        if len(all_rows) == 0:
+            raise BreakProcedureLoop()
+
+        while True:
+            chosen = input(">>> ")
+            if chosen == "":
+                rows = []
+                break
+            try:
+                chosen = [int(x) - 1 for x in chosen.split()]
+                rows = [all_rows[x] for x in chosen]
+                break
+            except (KeyError, ValueError):
+                pass
+
+        cur = self.conn.cursor()
+        for row in rows:
+            self.update_with_data(row)
+            cur.execute(query, row)
 
     def choice_command(self, choices: str, format: str, display: str | None = None):
         """
@@ -126,10 +180,19 @@ class StateMachine:
             self.display(display)
 
         all_rows = {}
-        for idx, row in enumerate(self.exec_many(choices)):
-            all_rows[idx] = row.copy()
-            self.update_with_data(row)
-            self.display(f"{1 + idx} " + format, row)
+        any_results = False
+        try:
+            for idx, row in enumerate(self.exec_many(choices)):
+                any_results = True
+                all_rows[idx] = row.copy()
+                self.update_with_data(row)
+                self.display(f"{1 + idx} " + format, row)
+        except sqlite3.OperationalError:
+            print(traceback.format_exc())
+            input("(Error raised, hit enter)")
+            raise BreakProcedureLoop()
+        if not any_results:
+            raise BreakProcedureLoop()
 
         if len(all_rows) == 0:
             return
@@ -138,7 +201,7 @@ class StateMachine:
             chosen = input(">>> ")
             if chosen == "":
                 chosen = None
-                break
+                raise BreakProcedureLoop()
             try:
                 chosen = int(chosen) - 1
                 all_rows[chosen]
@@ -150,7 +213,7 @@ class StateMachine:
             for key, value in all_rows[chosen].items():
                 self.data[key] = value
 
-    def bash_command(self, bash: str, query=None):
+    def bash_command(self, bash: str, query=None, system=False, multiline=True):
         """
         bash is a template string that will be executed
         stdout and stdin will be captured and saved as __stdout and __stdin
@@ -168,7 +231,14 @@ class StateMachine:
             the line will be split on spaces, and each field will be in __1, __2, __3...
         """
         command = bash.format(**self.data)
-        command_result = sp.run(command, shell=True, capture_output=True)
+        if system:
+            # System commands are just run without expecting any output.
+            # this is for running other applications like text editors.
+            os.system(command)
+            return
+        else:
+            command_result = sp.run(command, shell=True, capture_output=True)
+
         self.data["__stdout"] = command_result.stdout.decode()
         self.data["__stderr"] = command_result.stderr.decode()
 
@@ -188,14 +258,19 @@ class StateMachine:
                 cur.execute(query, item)
             self.conn.commit()
         elif query is not None and json_data is None:
-            cur = self.conn.cursor()
-            for line in data["__stdout"].splitlines():
-                item = {"__line": line}
-                for idx, field in enumerate(line.split()):
-                    item[f"__{idx+1}"] = field
-                item.update(self.data)
-                cur.execute(query, item)
-            self.conn.commit()
+            if multiline:
+                cur = self.conn.cursor()
+                for line in self.data["__stdout"].splitlines():
+                    item = {"__line": line}
+                    for idx, field in enumerate(line.split()):
+                        item[f"__{idx+1}"] = field
+                    item.update(self.data)
+                    cur.execute(query, item)
+                self.conn.commit()
+            else:
+                cur = self.conn.cursor()
+                cur.execute(query, self.data)
+                self.conn.commit()
 
     def write_file_command(self, filename, template, query=None, append=False):
         """
@@ -271,7 +346,7 @@ def main():
         print("Need a workflow yaml file")
         return
     if len(sys.argv) >= 3:
-        conn = sqlite3.connect(sys.argv)
+        conn = sqlite3.connect(sys.argv[2])
     else:
         conn = sqlite3.connect("wfcli.db")
     machine = StateMachine(states_file, conn)
