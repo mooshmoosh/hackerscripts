@@ -4,23 +4,25 @@ current_tasks:
 
     Commands:
       /p Switch a project to be top priority
+      /vp view details about a project
       /os Organize stuff / switch to no project
-      /q add a question
+      /q (question) add a question
       Add a new task (Quick)
       /mt modify a task
+      /st start a task
       /dt Task is done
-      Start taking notes
-        TODO: We need do update the scheuma to store notes in a FTS table
-        We need to be able to search the text and also questions and meeting titles
-        search for notes needs to give the question or neeting it came from
-      Search for questions
-      Search through notes
+      /m (meeting name) Start taking notes
+      /sq (search term) Search for questions
+      /sn Search through notes / answers
+      /wf (thing) make a new waiting for task
+      /vwf See the things I'm waiting for
       snooze a task till tomorrow
       snooze a task till next week
       modify project template
       apply a template of tasks to a project
       bump a project to be last
-      Start task
+      make a set of tasks block one task
+      make one task block a set of tasks
 
   tables:
     - |
@@ -32,7 +34,6 @@ current_tasks:
     - "  {desc} ({short_task_type}) - {project_name}"
   commands:
     - command: "/p"
-      to: "current_tasks"
       queries:
         - choices: |
             select
@@ -52,7 +53,6 @@ current_tasks:
           set priority = 0
           where id = :project_id
     - command: "/os"
-      to: "current_tasks"
       queries:
         - |
           update projects
@@ -60,10 +60,9 @@ current_tasks:
           where id in (
             select id from active_projects
           )
-        - "select null as :project_id;"
-        - "select null as :project_name;"
+        - "select null as project_id;"
+        - "select null as project_name;"
     - command: "/q"
-      to: "current_tasks"
       queries:
         - |
           insert into tasks(desc, task_type, project)
@@ -91,7 +90,6 @@ current_tasks:
           format: "{desc} ({short_task_type}) - {project_name}"
           display: "which task?"
     - command: "/dt"
-      to: "current_tasks"
       queries:
         - choices: |
             select
@@ -104,9 +102,75 @@ current_tasks:
             limit 100;
           format: "{desc} ({short_task_type}) - {project_name}"
           display: "which task?"
-        - "update tasks set completed_at = current_timestamp where id = task_id;"
-    - to: "current_tasks"
+        - "update tasks set completed_at = current_timestamp where id = :task_id;"
+    - command: "/m"
       queries:
+        - "select 'Review notes for ' || :__input as review_meeting_task_desc;"
+        - |
+          insert into tasks(desc, task_type)
+          values (
+            :review_meeting_task_desc,
+            (select id from task_types where short_name='R')
+          ) returning id as meeting_id
+        - bash: "touch /tmp/meeting_{meeting_id}.md"
+        - bash: "nvim /tmp/meeting_{meeting_id}.md"
+          system: true
+        - bash: "cat /tmp/meeting_{meeting_id}.md"
+          query: "insert into notes(id, note) values(:meeting_id, :__stdout);"
+          multiline: false
+    - command: "/sq"
+      queries:
+        - choices: |
+            select rowid as question_id, desc as question_text from
+            questions_fts 
+            where desc match :__input
+            order by rank
+          format: "{question_text}"
+          display: "Which matching question?"
+        - "insert into notes(id, note) values (:question_id, '') on conflict do nothing;"
+        - filename: "/tmp/question_answer_tmp.md"
+          template: "{question_answer_content}"
+          query: |
+              select
+                note as question_answer_content
+              from notes
+              where id = :question_id
+        - bash: "nvim /tmp/question_answer_tmp.md"
+          system: true
+        - bash: "cat /tmp/question_answer_tmp.md"
+          query: "update notes set note = :__stdout where id = :question_id;"
+    - command: "/sn"
+      queries:
+        - choices: |
+            select
+              notes_fts.rowid as note_id,
+              notes_fts.note as question_answer_content,
+              tasks.desc as task_description
+            from
+            notes_fts, tasks
+            where note match :__input
+            and notes_fts.rowid = tasks.id
+            order by rank
+          format: "{task_description}"
+          display: "Which matching question / meeting?"
+        - filename: "/tmp/question_answer_tmp.md"
+          template: "{question_answer_content}"
+        - bash: "nvim /tmp/question_answer_tmp.md"
+          system: true
+        - bash: "cat /tmp/question_answer_tmp.md"
+          query: "update notes set note = :__stdout where id = :note_id;"
+    - command: "/st"
+      to: "__next"
+      queries:
+        - display: "Which task?"
+          format: "{task_description}"
+          choices: |
+            select
+              id as current_task_id,
+              desc as task_description,
+              workflow as __next
+            from available_tasks;
+    - queries:
         - |
           insert into tasks(desc, project, task_type)
           values (
@@ -118,6 +182,7 @@ current_tasks:
               where short_name = 'S'
             )
           );
+
 modify_task:
   display: |
     # Modify task
@@ -125,8 +190,11 @@ modify_task:
     commands:
       this is a project
       this is a question for an existing project
-      this is a task on a project
+      this is a general task on a project
       this is a piece of data for a project
+      this is an answer to a question
+      change the description
+      change the type
     
     description: {desc}
 
@@ -159,17 +227,40 @@ schema:
      values ('WF', 'Waiting For');
     insert into task_types(short_name, name, workflow)
      values ('R', 'Review Notes', 'edit_notes');
-    insert into task_types(short_name, name)
-     values ('Q', 'Question');
-    insert into task_types(short_name, name)
-     values ('T', 'General Task');
-    insert into task_types(short_name, name)
-     values ('S', 'Stuff');
+    insert into task_types(short_name, name, workflow)
+     values ('Q', 'Question', 'answer_question');
+    insert into task_types(short_name, name, workflow)
+     values ('T', 'General Task', 'answer_question');
+    insert into task_types(short_name, name, workflow)
+     values ('S', 'Stuff', 'modify_task');
+
+    CREATE VIRTUAL TABLE questions_fts USING fts5(desc, content='tasks', content_rowid='id');
+    CREATE TRIGGER questions_fts_ai AFTER INSERT on tasks
+    WHEN new.task_type = (select id from task_types where short_name = 'Q')
+    BEGIN
+      insert into questions_fts(rowid, desc) values(new.id, new.desc);
+    END;
+    CREATE TRIGGER questions_fts_ad AFTER DELETE on tasks
+    WHEN old.task_type = (select id from task_types where short_name = 'Q')
+    BEGIN
+      insert into questions_fts(questions_fts, rowid, desc) values('delete', old.id, old.desc);
+    END;
+    CREATE TRIGGER questions_fts_au_was_question AFTER UPDATE on tasks
+    WHEN old.task_type = (select id from task_types where short_name = 'Q') and new.task_type = old.task_type
+    BEGIN
+      insert into questions_fts(questions_fts, rowid, desc) values('delete', old.id, old.desc);
+      insert into questions_fts(rowid, desc) values(new.id, new.desc);
+    END;
+    CREATE TRIGGER questions_fts_au_new_is_question AFTER UPDATE on tasks
+    WHEN new.task_type = (select id from task_types where short_name = 'Q') and old.task_type != new.task_type
+    BEGIN
+      insert into questions_fts(rowid, desc) values(new.id, new.desc);
+    END;
 
     CREATE TABLE projects(
       id integer primary key,
       created_at timestamp default current_timestamp,
-      name text
+      name text,
       template integer,
       priority integer not null default 2);
 
@@ -179,8 +270,8 @@ schema:
           count(*) as tc,
           project as project
         from tasks
-        group by project
         where completed_at is null
+        group by project
       )
       select
         p.id,
@@ -193,34 +284,48 @@ schema:
       on p.id = t.project
       where t.tc > 0;
 
-    CREATE TABLE meetings(
-      id integer primary key,
-      name text);
-
-    CREATE TABLE notes(
+    CREATE TABLE notes (
       id integer primary key,
       note text);
 
+    CREATE VIRTUAL TABLE notes_fts USING fts5(note, content='notes', content_rowid='id');
+    CREATE TRIGGER notes_fts_ai AFTER INSERT on notes
+    BEGIN
+      insert into notes_fts(rowid, note) values(new.id, new.note);
+    END;
+    CREATE TRIGGER notes_fts_ad AFTER DELETE on notes
+    BEGIN
+      insert into notes_fts(notes_fts, rowid, note) values('delete', old.id, old.note);
+    END;
+    CREATE TRIGGER notes_fts_au AFTER UPDATE on notes
+    BEGIN
+      insert into notes_fts(notes_fts, rowid, note) values('delete', old.id, old.note);
+      insert into notes_fts(rowid, note) values(new.id, new.note);
+    END;
+
     CREATE VIEW available_tasks as
       with undone_unsnoozed_tasks as (
-        select
-          t.desc
+        select *
         from tasks as t
         where completed_at is NULL
         and (hide_until is NULL or hide_until < current_timestamp)
       ),
       blocked_by as (
         select
-          b.blocked,
-          b.blocker,
-          t.completed_at
+          b.blocked as blocked,
+          b.blocker as blocker,
+          t.completed_at as completed_at
         from blocks as b
         inner join tasks as t on t.id = b.blocker
         where t.completed_at is null
         union
-        select t2.project, t2.id, t2.completed_at
-        where t2.completed_at is null
-        and t2.project is not null
+        select
+          t.project as blocked,
+          t.id as blocker,
+          t.completed_at as completed_at
+        from tasks as t
+        where t.completed_at is null
+        and t.project is not null
       )
       select
         t.id as id,
@@ -229,6 +334,7 @@ schema:
         p.name as project_name,
         t.task_type as task_type_id,
         tt.short_name as short_task_type,
+        coalesce(tt.workflow, 'current_tasks') as workflow,
         t.created_at,
         t.hide_until,
         t.completed_at
@@ -288,7 +394,7 @@ schema:
       from
         tasks as t1,
         tasks as t2,
-        project_template_task_links as ptl,
+        project_template_task_links as ptl
       where t1.source = ptl.blocker
       and t2.source = ptl.blocked
       and t1.project = t2.project;
