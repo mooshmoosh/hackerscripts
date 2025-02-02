@@ -19,6 +19,7 @@ fi
 
 while true
 do
+    # Check command needs to be command that prints a non empty string when the file has changed
     if [ $(eval $CHECK_CMD) == "" ]
     then
         # The check command was exited with ctrl-c, exit the whole script
