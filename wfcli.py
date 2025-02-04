@@ -124,6 +124,15 @@ class StateMachine:
                 self.choice_command(**query)
             elif "select_from" in query:
                 self.multi_choice_command(**query)
+            elif "prompt" in query:
+                self.get_prompt(**query)
+
+    def get_prompt(self, prompt, target, display=""):
+        """
+        Simple: ask a prompt and save the result to a variable
+        """
+        self.display(display)
+        self.data[target] = input(prompt + " >>>")
 
     def multi_choice_command(self, select_from: str, query: str, format: str, display: str | None = None):
         """
@@ -167,14 +176,21 @@ class StateMachine:
             self.update_with_data(row)
             cur.execute(query, row)
 
-    def choice_command(self, choices: str, format: str, display: str | None = None):
+    def choice_command(self, choices: str, format: str, display: str | None = None, null_check=None):
         """
         display some text
         perform a query
         display the output with an enumerated number next to each row
         ask for input (a number)
         use the row selected to set variables
+
+        null_check: if null_check is not null, look at the variable it refers to. If that variable
+        is not null then do not ask for a selection. This lets you implement defaults but ask a
+        question if they're missing
         """
+        if null_check is not None:
+            if self.data.get(null_check, None) is not None:
+                return
 
         if display is not None:
             self.display(display)

@@ -2,22 +2,54 @@ current_tasks:
   display: |
     # To do
 
+    current project: {project_name}
+    task type:       {next_task_type_name}
+
   tables:
     - |
       select
         desc,
         short_task_type,
-        project_name
+        '
+      ' || coalesce(project_name, '(No project)') || '
+      ' as project_name
       from available_tasks;
-    - "  {desc} ({short_task_type}) - {project_name}"
+    - display: "{project_name}    {desc} ({short_task_type})"
+      groups:
+        - project_name
+      
+  queries:
+    - "with cte as(select name as next_task_type_name from task_types where id = :next_task_type_id union all select null) select * from cte limit 1;"
   commands:
+    - command: "/np"
+      queries:
+        - "insert into tasks(desc, task_type) values ('Come up with next actions: ' || :__input, (select id from task_types where short_name = 'P')) returning id as project_id"
+        - "update tasks set project = :project_id where id = :project_id;"
+        - "insert into projects(id, name) values (:project_id, :__input) on conflict do nothing"
+    - command: "/tt"
+      queries:
+        - choices: "select id as next_task_type_id, name as next_task_type_name from task_types"
+          format: "{next_task_type_name}"
+          display: "Which task type should be used next?"
+    - command: "/bt"
+      to: break_down_task
+      queries:
+        - choices: "select id as current_task_id, desc as task_description from available_tasks;"
+          format: "{task_description}"
+          display: "Which task should be broken down?"
+    - command: "/vp"
+      to: modify_project
+      queries:
+        - choices: select id as project_id, name as project_name from active_projects;
+          format: "{project_name}"
+          display: "Which project?"
     - command: "/?"
       to: current_tasks_help
     - command: "/p"
       queries:
         - choices: |
             select
-              id as project_id, 
+              id as project_id,
               name as project_name
             from active_projects;
           format: "{project_name}"
@@ -42,6 +74,7 @@ current_tasks:
           )
         - "select null as project_id;"
         - "select null as project_name;"
+        - "select null as next_task_type_id;"
     - command: "/q"
       queries:
         - |
@@ -102,7 +135,7 @@ current_tasks:
       queries:
         - choices: |
             select rowid as question_id, desc as question_text from
-            questions_fts 
+            questions_fts
             where desc match :__input
             order by rank
           format: "{question_text}"
@@ -156,21 +189,22 @@ current_tasks:
           values (
             :__input,
             :project_id,
-            (
+            coalesce(:next_task_type_id, (
               select id
               from task_types
               where short_name = 'S'
-            )
+            ))
           );
 
 current_tasks_help:
   display: |
     /p Switch a project to be top priority
+    /np (name) new project
     /vp view details about a project
     /os Organize stuff / switch to no project
     /q (question) add a question
-    Add a new task (Quick)
     /mt modify a task
+    /bt break down a task into smaller pieces
     /st start a task
     /dt Task is done
     /m (meeting name) Start taking notes
@@ -178,6 +212,8 @@ current_tasks_help:
     /sn Search through notes / answers
     /wf (thing) make a new waiting for task
     /vwf See the things I'm waiting for
+    /tt set the type of the next task to create
+    Add a new task (Quick)
     snooze a task till tomorrow
     snooze a task till next week
     modify project template
@@ -188,6 +224,31 @@ current_tasks_help:
   commands:
     - to: current_tasks
 
+break_down_task:
+  display: |
+    # Break down task ("/b" to go back)
+
+    Task:    {task_description}
+    Project: {project_name}
+
+  queries:
+    - select project_id, project_name, desc as task_description from tasks_denorm where id = :current_task_id
+  tables:
+    - |
+      select
+        t.desc as blocker_task_description
+      from tasks as t, blocks as b
+      where
+        b.blocked = :current_task_id
+        and b.blocker = t.id;
+    - "    {blocker_task_description}"
+  commands:
+    - command: "/b"
+      to: current_tasks
+    - queries:
+        - "insert into tasks(desc, project, task_type) values (:__input, :project_id, (select id from task_types where short_name = 'T')) returning id as new_task_id"
+        - "insert into blocks(blocked, blocker) values (:current_task_id, :new_task_id);"
+
 answer_question:
   queries:
     - |
@@ -195,7 +256,7 @@ answer_question:
       values (
         :current_task_id,
         '# ' || (
-          select desc 
+          select desc
           from tasks
           where id = :current_task_id
         )) on conflict do nothing;
@@ -236,7 +297,7 @@ modify_task:
       where id = :current_task_id
   display: |
     # Modify task
-    
+
     Description /cd: {task_description}
     Type /ct:        {task_type}
     Project /cp:     {project_name}
@@ -245,31 +306,61 @@ modify_task:
       /ht tomorrow
       /ht next week
       /ht 2025-06-01
-    
+
     /np this is a new project
     /pd this is a piece of data for a project
     /qa this is part of an answer to a question
     /pn this is a general project note
     /b back
+
   commands:
+    - command: "/pn"
+      to: current_tasks
+      queries:
+        - "select project_id, project_name from tasks_denorm where id = :current_task_id;"
+        - display: "Which project is this a note for?"
+          choices: "select id as project_id, name as project_name from active_projects;"
+          format: "{project_name}"
+          null_check: project_id
+        - "insert into notes(id, note) values (:project_id, '# ' || :project_name) on conflict do nothing;"
+        - |
+          update notes set note = note || '
+
+          ' || :task_description
+          where id = :project_id;
+        - "update tasks set completed_at = current_timestamp where id = :current_task_id;"
     - command: "/pd"
       queries:
         - display: "Which project?"
           choices: "select id as project_id, name as project_name from active_projects;"
           format: "{project_name}"
         - display: "which field"
-          choices: "select id as field_id, name as field_name from project_template_fields;"
-
-
+          choices: |
+            select
+              id as field_id,
+              name as field_name,
+              name as displayed_field_name
+            from project_template_fields
+            union all
+            select
+              max(id) + 1 as field_id,
+              :__input as field_name,
+              :__input || ' (new)' as displayed_field_name
+            from project_template_fields;
+        - prompt: "What value?"
+          display: "{task_description}"
+          target: "field_value"
+        - "insert into project_template_fields(id, name) values (:field_id, field_name) on conflict do nothing;"
+        - "insert into project_data(project, field, value) values (:project_id, :field_id, :field_valuie);"
     - command: "/np"
       to: current_tasks
       queries:
         - "insert into projects(id, name) values (:current_task_id, :task_description) on conflict do nothing"
         - |
-          update tasks set 
-            task_type = (select id from task_types where short_name = 'P')
-            project = null,
-            desc = 'Come up with next actions: ' | :task_description'
+          update tasks set
+            task_type = (select id from task_types where short_name = 'P'),
+            project = :current_task_id,
+            desc = 'Come up with next actions: ' || :task_description
           where id = :current_task_id
     - command: "/ht"
       queries:
@@ -307,8 +398,94 @@ modify_task:
     - command: "/b"
       to: current_tasks
 
+modify_project:
+  display: |
+    # Project: {project_name} (/b to go back, /en to edit notes, otherwise add tasks)
+    {project_notes}
+    # Tasks:
+  queries:
+    - "select note as project_notes from notes where id = :project_id"
+  tables:
+    - |
+      select
+        desc || case completed_at is null when 1 then '' else ' (done)' end as task_description
+      from tasks
+      where project = :project_id
+      order by completed_at is not null, created_at desc;
+    - "    {task_description}"
+  commands:
+    - command: "/b"
+      to: current_tasks
+    - command: "/en"
+      queries:
+        - "insert into notes(id, note) values (:project_id, '# ' || :project_name) on conflict do nothing;"
+        - filename: ".temp_note.md"
+          template: "{project_note_content}"
+          query: |
+              select
+                note as project_note_content
+              from notes
+              where id = :project_id
+        - bash: "nvim .temp_note.md"
+          system: true
+        - bash: "cat .temp_note.md"
+          query: "update notes set note = :__stdout where id = :project_id;"
+    - queries:
+      - |
+        insert into tasks(desc, task_type, project)
+          values (
+            :__input,
+            (
+              select id
+              from task_types
+              where short_name = 'T'
+            ),
+            :project_id
+          );
 
-    
+review_notes:
+  display: |
+    # Review: {task_description} (/b to go back, /en to edit notes, otherwise add tasks)
+    {meeting_notes}
+    # Tasks:
+  queries:
+    - "select desc as task_description, project_id, project_name from tasks_denorm where id = :current_task_id;"
+    - "select note as meeting_notes from notes where id = :current_task_id"
+  tables:
+    - |
+      select t.desc as dependant_task
+      from tasks as t, blocks as b
+      where t.project = :project_id
+      and b.blocker = :current_task_id
+      and t.id = b.blocked
+      order by completed_at is not null, created_at desc;
+    - "    {dependant_task}"
+  commands:
+    - command: "/b"
+      to: current_tasks
+    - command: "/en"
+      queries:
+        - "insert into notes(id, note) values (:current_task_id, '# ' || :task_description) on conflict do nothing;"
+        - filename: ".temp_note.md"
+          template: "{meeting_notes}"
+        - bash: "nvim .temp_note.md"
+          system: true
+        - bash: "cat .temp_note.md"
+          query: "update notes set note = :__stdout where id = :current_task_id;"
+    - queries:
+      - |
+        insert into tasks(desc, task_type, project)
+          values (
+            :__input,
+            (
+              select id
+              from task_types
+              where short_name = 'T'
+            ),
+            :project_id
+          ) returning id as new_task_id;
+      - "insert into blocks(blocker, blocked) values (:current_task_id, :new_task_id);"
+
 schema:
   display: |
     CREATE TABLE tasks(
@@ -336,8 +513,8 @@ schema:
      values ('P', 'Project', 'modify_project');
     insert into task_types(short_name, name)
      values ('WF', 'Waiting For');
-    insert into task_types(short_name, name, workflow)
-     values ('R', 'Review Notes', 'edit_notes');
+    insert into task_types(short_name, name)
+     values ('R', 'Review Notes');
     insert into task_types(short_name, name)
      values ('Q', 'Question');
     insert into task_types(short_name, name)
@@ -430,9 +607,8 @@ schema:
       from tasks as t
       left join task_types as tt
       on tt.id = t.task_type
-      left join projects
-      on t.project = p.id
-      where t.id = :current_task_id;
+      left join projects as p
+      on t.project = p.id;
 
     CREATE VIEW available_tasks as
       with undone_unsnoozed_tasks as (
@@ -457,6 +633,7 @@ schema:
         from tasks as t
         where t.completed_at is null
         and t.project is not null
+        and t.project != t.id
       )
       select
         t.id as id,
@@ -465,7 +642,7 @@ schema:
         p.name as project_name,
         t.task_type as task_type_id,
         tt.short_name as short_task_type,
-        coalesce(tt.workflow, 'current_tasks') as workflow,
+        tt.workflow as workflow,
         t.created_at,
         t.hide_until,
         t.completed_at
