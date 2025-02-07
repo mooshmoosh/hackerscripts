@@ -125,7 +125,8 @@ current_tasks:
             :review_meeting_task_desc,
             (select id from task_types where short_name='R')
           ) returning id as meeting_id
-        - bash: "touch .temp_note.md"
+        - filename: ".temp_note.md"
+          template: "# {__input}"
         - bash: "nvim .temp_note.md"
           system: true
         - bash: "cat .temp_note.md"
@@ -447,7 +448,9 @@ review_notes:
   display: |
     # Review: {task_description} (/b to go back, /en to edit notes, otherwise add tasks)
     {meeting_notes}
-    # Tasks:
+    Project: {project_name}
+
+    # Tasks
   queries:
     - "select desc as task_description, project_id, project_name from tasks_denorm where id = :current_task_id;"
     - "select note as meeting_notes from notes where id = :current_task_id"
@@ -486,6 +489,15 @@ review_notes:
           ) returning id as new_task_id;
       - "insert into blocks(blocker, blocked) values (:current_task_id, :new_task_id);"
 
+brainstorm_actions:
+  queries:
+    - filename: ".temp_note.md"
+      template: "# Come up with next actions for {task_description}"
+    - bash: "nvim .temp_note.md"
+      system: true
+    - bash: "cat .temp_note.md"
+      query: "update notes set note = :__stdout where id = :current_task_id;"
+
 schema:
   display: |
     CREATE TABLE tasks(
@@ -514,7 +526,7 @@ schema:
     insert into task_types(short_name, name)
      values ('WF', 'Waiting For');
     insert into task_types(short_name, name)
-     values ('R', 'Review Notes');
+     values ('R', 'Review Notes', 'review_notes');
     insert into task_types(short_name, name)
      values ('Q', 'Question');
     insert into task_types(short_name, name)
@@ -570,7 +582,8 @@ schema:
       from projects as p
       inner join undone_task_count as t
       on p.id = t.project
-      where t.tc > 0;
+      where t.tc > 0
+      order by p.priority asc, p.created_at desc;
 
     CREATE TABLE notes (
       id integer primary key,
