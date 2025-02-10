@@ -300,7 +300,7 @@ modify_task:
     # Modify task
 
     Description /cd: {task_description}
-    Type /ct:        {task_type}
+    Type /tt:        {task_type}
     Project /cp:     {project_name}
     created:         {task_created_at_time}
     hidden till /ht: {task_hidden_till_time}
@@ -384,7 +384,7 @@ modify_task:
     - command: "/cd"
       queries:
         - "update tasks set desc = :__input where id = :current_task_id"
-    - command: "/ct"
+    - command: "/tt"
       queries:
         - choices: |
             select
@@ -406,6 +406,7 @@ modify_project:
     # Tasks:
   queries:
     - "select note as project_notes from notes where id = :project_id"
+    - "select name as project_name from projects where id = :project_id"
   tables:
     - |
       select
@@ -446,7 +447,7 @@ modify_project:
 
 review_notes:
   display: |
-    # Review: {task_description} (/b to go back, /en to edit notes, otherwise add tasks)
+    # Review: {task_description} (/b to go back, /en to edit notes, /d done, otherwise add tasks)
     {meeting_notes}
     Project: {project_name}
 
@@ -464,6 +465,10 @@ review_notes:
       order by completed_at is not null, created_at desc;
     - "    {dependant_task}"
   commands:
+    - command: "/d"
+      to: current_tasks
+      queries:
+        - "update tasks set completed_at = current_timestamp where id = :current_task_id;"
     - command: "/b"
       to: current_tasks
     - command: "/en"

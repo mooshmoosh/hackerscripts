@@ -229,7 +229,7 @@ class StateMachine:
             for key, value in all_rows[chosen].items():
                 self.data[key] = value
 
-    def bash_command(self, bash: str, query=None, system=False, multiline=True):
+    def bash_command(self, bash: str, query=None, system=False, multiline=True, sep="|"):
         """
         bash is a template string that will be executed
         stdout and stdin will be captured and saved as __stdout and __stdin
@@ -278,7 +278,7 @@ class StateMachine:
                 cur = self.conn.cursor()
                 for line in self.data["__stdout"].splitlines():
                     item = {"__line": line}
-                    for idx, field in enumerate(line.split()):
+                    for idx, field in enumerate(line.split(sep)):
                         item[f"__{idx+1}"] = field
                     item.update(self.data)
                     cur.execute(query, item)
