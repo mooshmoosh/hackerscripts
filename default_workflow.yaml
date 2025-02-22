@@ -216,12 +216,14 @@ current_tasks_help:
     /tt set the type of the next task to create
     Add a new task (Quick)
     snooze a task till tomorrow
+    snooze a task till the weekend
     snooze a task till next week
     modify project template
     apply a template of tasks to a project
     bump a project to be last
-    make a set of tasks block one task
     make one task block a set of tasks
+    make a bunch of tasks blocked by a new waiting for task
+    make a set of tasks block one task
   commands:
     - to: current_tasks
 

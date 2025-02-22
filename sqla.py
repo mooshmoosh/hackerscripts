@@ -7,6 +7,9 @@ from dataclasses import dataclass, field
 class Token:
     content: str | list | None
 
+    def optimize(self):
+        return self
+
 
 class String(Token):
     pass
@@ -171,19 +174,25 @@ class Div(BinaryOp):
 
 
 @dataclass(eq=True)
-class ConstantColumn(Function):
-    Table: Any
-    column: int
+class Column(Function):
+    table: Any
+    column_idx: int
 
 
 @dataclass(eq=True)
 class ConstantTable(Function):
-    rows: list
+    rows: list[list]
 
 
 @dataclass(eq=True)
 class TableRef(Function):
     table_name: str
+    known_columns: list[str]
+
+    @classmethod
+    def from_str(self, name):
+        [table_name, *column] = name.split(".", 1)
+        return self(table_name, column)
 
 
 class Parser:
@@ -208,7 +217,7 @@ class Parser:
         if function in self.functions:
             return self.functions[function]
         else:
-            return lambda *args: TableRef(function)
+            return lambda *args: TableRef.from_str(function)
 
     def parse(self):
         for token in tokenise(self.text):
@@ -257,7 +266,7 @@ def tests():
         ),
         op2=Number(content=5),
     )
-    assert parse("1 records + ")[0] == Add(Number(1), TableRef("records"))
+    assert parse("1 records + ")[0] == Add(Number(1), TableRef("records", []))
 
     print(build("[1 2 3] [2 3 4] +"))
     print("OK")
