@@ -56,8 +56,12 @@ current_tasks:
         - "update tasks set project = :project_id where id = :project_id;"
         - "insert into projects(id, name, template) values (:project_id, :new_project_name, :project_template_id) on conflict do nothing"
       to: new_project_from_template
-    - command: "/vwf"
-      to: waiting_fors
+    - command: "/vtt"
+      to: tasks_of_type
+      queries:
+        - choices: "select id as task_type_id, name as task_type_name, short_name as task_type_short_name from task_types"
+          format: "{task_type_name} ({task_type_short_name})"
+          display: "Which task type?"
     - command: "/wf"
       queries:
         - "create temporary table blocked(id integer);"
@@ -307,7 +311,7 @@ current_tasks_help:
     /sq (search term) Search for questions
     /sn Search through notes / answers
     /wf (thing) make a new waiting for task that blocks other tasks
-    /vwf See the things I'm waiting for
+    /vtt See current tasks, limited to a single type
     /tt set the type of the next task to create
     Add a new task (Quick)
     /ht tomorrow: snooze a task till tomorrow
@@ -377,13 +381,14 @@ modify_project_template:
               on tt.task_type = tts.id
             left join project_template_fields as tf
               on tt.format_field = tf.id
+            where tt.template = :project_template_id
         - bash: "nvim .temp_note.md"
           system: true
         - "create temporary table updated_template_tasks(desc text, field_name text, short_task_type text, id integer);"
         - bash: "cat .temp_note.md"
           query: |
             with new_id as (
-              select cast(coalesce(:_4, 0) as integer) as id
+              select cast(coalesce(:__4, 0) as integer) as id
             )
             insert into temp.updated_template_tasks(desc, field_name, short_task_type, id)
             values (:__1, :__2, :__3,
@@ -401,7 +406,8 @@ modify_project_template:
           from temp.updated_template_tasks as utt
           left join project_template_fields as tf
             on utt.field_name = tf.name
-          where tf.id is NULL;
+          where tf.id is NULL
+          and trim(coalesce(utt.field_name, '')) <> '';
         - "delete from project_template_tasks where id in (select id from temp.updated_template_tasks);"
         - insert into project_template_tasks(id, template, task_desc, format_field, task_type)
           select
@@ -443,7 +449,7 @@ modify_project_template:
           system: true
         - "create temporary table updated_task_links(blocker text, blocked text);"
         - bash: "cat .temp_note.md"
-          query: "insert into temp.updated_task_links(blocker, blocked) values (:__1, :__2)"
+          query: "insert into temp.updated_task_links(blocker, blocked) values ((select trim(:__1)), (select trim(:__2))"
         - "delete from temp.updated_task_links where trim(blocker) like '#%' or trim(blocker) == '';"
         - |
           delete from project_template_task_links where id in (
@@ -475,24 +481,43 @@ new_project_from_template:
     # {new_project_name}
     ok            - create these tasks
     /data         - pick a field to set
-    /set (field)  - pick a field to set
+    /set (field)  - set a field
     /b            - cancel and don't create tasks
 
     ## Fields:
   tables:
     - |
-      select tf.name as field_name, pd.value
-      from
-        project_template_fields as tf
-        left join project_data as pd
-          on pd.field = tf.id
-      where pd.project = :project_id;
+      select field_name, field_value
+      from denorm_project_data
+      where project_id = :project_id;
     - "{field_name}: {field_value}"
     - ""
-    - "# Tasks"
+    - |
+      
+      # Tasks
     - "select desc as new_task_desc from generated_project_tasks where project = :project_id"
     - "    {new_task_desc}"
   commands:
+    - command: "/set"
+      queries:
+        - "select null as field_id"
+        - "select field_id from denorm_project_data where field_name = :__input and project_id = :project_id;"
+        - "delete from project_data where project = :project_id and field = :field_id and :field_id is not null;"
+        - prompt: "What value to set?"
+          target: field_value
+        - |
+          insert into project_data(project, field, value)
+          select :project_id, :field_id, :field_value
+          where :field_id is not null;
+    - command: "/data"
+      queries:
+        - choices: "select field_id, field_name from denorm_project_data where project_id = :project_id;"
+          display: "which field?"
+          format: "{field_name}"
+        - prompt: "What value to set?"
+          target: field_value
+        - "delete from project_data where project = :project_id and field = :field_id;"
+        - "insert into project_data(project, field, value) values (:project_id, :field_id, :field_value);"
     - command: "/b"
       to: current_tasks
     - command: "ok"
@@ -508,32 +533,46 @@ new_project_from_template:
           from generated_project_links
           where project_id = :project_id
 
-waiting_fors:
+tasks_of_type:
   display: |
-    # Waiting for list
+    # {task_type_name} Tasks
     
-    (/dt mark as done, /b go back)
+    (/dt mark as done, /st start task, /b go back)
   tables:
     - |
       select
-        desc as waiting_for_task
+        desc as task_description
       from available_tasks
-      where short_task_type = 'WF'
-    - "{waiting_for_task}"
+      where task_type_id = :task_type_id
+    - "{task_description}"
+  queries:
+    - "select name as task_type_name from task_types where id = :task_type_id;"
   commands:
+    - command: "/st"
+      to: "__next"
+      queries:
+        - display: "Which task?"
+          format: "{task_description}"
+          choices: |
+            select
+              id as current_task_id,
+              desc as task_description,
+              coalesce(workflow, 'answer_question')  as __next
+            from available_tasks
+            where task_type_id = :task_type_id;
     - command: "/b"
       to: current_tasks
     - command: "/dt"
       queries:
         - choices: |
             select 
-              id as done_waiting_task_id,
-              dasc as waiting_for_task
+              id as done_task_id,
+              dasc as task_description
             from available_tasks
-            where short_task_type = 'WF';
-          format: "{waiting_for_task}"
+            where task_type_id = :task_type_id;
+          format: "{task_description}"
           display: "Which is now done?"
-        - "update tasks set completed_at = current_timestamp where id = :done_waiting_task_id;"
+        - "update tasks set completed_at = current_timestamp where id = :done_task_id;"
 
 break_down_task:
   display: |
@@ -774,8 +813,7 @@ review_notes:
     - |
       select t.desc as dependant_task
       from tasks as t, blocks as b
-      where t.project = :project_id
-      and b.blocker = :current_task_id
+      where b.blocker = :current_task_id
       and t.id = b.blocked
       order by completed_at is not null, created_at desc;
     - "    {dependant_task}"
@@ -785,6 +823,7 @@ review_notes:
         - "insert into tasks(desc, task_type) values ('Come up with next actions: ' || :__input, (select id from task_types where short_name = 'P')) returning id as project_id"
         - "update tasks set project = :project_id where id = :project_id;"
         - "insert into projects(id, name) values (:project_id, :__input) on conflict do nothing"
+        - "update tasks set project = :project_id where id = :current_task_id"
     - command: "/p"
       queries:
         - choices: |
@@ -794,6 +833,7 @@ review_notes:
             from active_projects;
           format: "{project_name}"
           display: "Which project"
+        - "update tasks set project = :project_id where id = :current_task_id"
     - command: "/d"
       to: current_tasks
       queries:
@@ -831,6 +871,136 @@ brainstorm_actions:
       system: true
     - bash: "cat .temp_note.md"
       query: "update notes set note = :__stdout where id = :current_task_id;"
+
+schema_change_on_load: |
+    drop view if exists tasks_denorm;
+    create view tasks_denorm as
+      select
+        t.id as id,
+        t.desc as desc,
+        t.project as project_id,
+        p.name as project_name,
+        t.task_type as task_type_id,
+        tt.short_name as short_task_type,
+        tt.name as task_type,
+        coalesce(tt.workflow, 'current_tasks') as workflow,
+        t.created_at,
+        t.hide_until,
+        t.completed_at
+      from tasks as t
+      left join task_types as tt
+      on tt.id = t.task_type
+      left join projects as p
+      on t.project = p.id;
+
+    drop view if exists available_tasks;
+    CREATE VIEW available_tasks as
+      with undone_unsnoozed_tasks as (
+        select *
+        from tasks as t
+        where completed_at is NULL
+        and (hide_until is NULL or hide_until < current_timestamp)
+      ),
+      blocked_by as (
+        select
+          b.blocked as blocked,
+          b.blocker as blocker,
+          t.completed_at as completed_at
+        from blocks as b
+        inner join tasks as t on t.id = b.blocker
+        where t.completed_at is null
+        union
+        select
+          t.project as blocked,
+          t.id as blocker,
+          t.completed_at as completed_at
+        from tasks as t
+        where t.completed_at is null
+        and t.project is not null
+        and t.project <> t.id
+      )
+      select
+        t.id as id,
+        t.desc as desc,
+        t.project as project_id,
+        p.name as project_name,
+        t.task_type as task_type_id,
+        tt.short_name as short_task_type,
+        tt.workflow as workflow,
+        t.created_at,
+        t.hide_until,
+        t.completed_at
+      from undone_unsnoozed_tasks as t
+      left join blocked_by as b on t.id = b.blocked
+      left join projects as p on t.project = p.id
+      left join task_types as tt on t.task_type = tt.id
+      where b.blocker is null
+      order by coalesce(p.priority, 1) asc, p.id desc, t.created_at desc;
+
+    drop view if exists active_projects;
+    CREATE VIEW active_projects as
+      with undone_task_count as (
+        select
+          count(*) as tc,
+          project as project
+        from tasks
+        where completed_at is null
+        group by project
+      )
+      select
+        p.id,
+        p.created_at,
+        p.name,
+        p.template,
+        p.priority
+      from projects as p
+      inner join undone_task_count as t
+      on p.id = t.project
+      where t.tc > 0
+      order by p.priority asc, p.created_at desc;
+
+    drop view if exists generated_project_tasks;
+    CREATE VIEW generated_project_tasks as
+      select
+        tt.id as source,
+        format(tt.task_desc, pd.value) as desc,
+        p.id as project,
+        tt.task_type as task_type
+      from project_template_tasks as tt
+      inner join projects as p
+        on p.template = tt.template
+      left join project_data as pd
+        on tt.format_field = pd.field
+        and p.id = pd.project;
+
+    drop view if exists generated_project_links;
+    CREATE VIEW generated_project_links as
+      select
+        t1.project as project_id,
+        t1.id as blocker,
+        t2.id as blocked
+      from
+        tasks as t1,
+        tasks as t2,
+        project_template_task_links as ptl
+      where t1.source = ptl.blocker
+      and t2.source = ptl.blocked
+      and t1.project = t2.project;
+
+    drop view if exists denorm_project_data;
+    create view denorm_project_data as
+      select
+        p.id as project_id,
+        tf.id as field_id,
+        tf.name as field_name,
+        pd.value as field_value
+      from project_template_tasks as tt
+      inner join project_template_fields as tf
+        on tt.format_field = tf.id
+      inner join projects as p
+        on p.template = tt.template
+      left join project_data as pd
+        on (pd.field = tf.id and pd.project = p.id);
 
 schema:
   display: |
@@ -898,27 +1068,6 @@ schema:
       template integer,
       priority integer not null default 2);
 
-    CREATE VIEW active_projects as
-      with undone_task_count as (
-        select
-          count(*) as tc,
-          project as project
-        from tasks
-        where completed_at is null
-        group by project
-      )
-      select
-        p.id,
-        p.created_at,
-        p.name,
-        p.template,
-        p.priority
-      from projects as p
-      inner join undone_task_count as t
-      on p.id = t.project
-      where t.tc > 0
-      order by p.priority asc, p.created_at desc;
-
     CREATE TABLE notes (
       id integer primary key,
       note text);
@@ -937,68 +1086,6 @@ schema:
       insert into notes_fts(notes_fts, rowid, note) values('delete', old.id, old.note);
       insert into notes_fts(rowid, note) values(new.id, new.note);
     END;
-
-    create view tasks_denorm as
-      select
-        t.id as id,
-        t.desc as desc,
-        t.project as project_id,
-        p.name as project_name,
-        t.task_type as task_type_id,
-        tt.short_name as short_task_type,
-        tt.name as task_type,
-        coalesce(tt.workflow, 'current_tasks') as workflow,
-        t.created_at,
-        t.hide_until,
-        t.completed_at
-      from tasks as t
-      left join task_types as tt
-      on tt.id = t.task_type
-      left join projects as p
-      on t.project = p.id;
-
-    CREATE VIEW available_tasks as
-      with undone_unsnoozed_tasks as (
-        select *
-        from tasks as t
-        where completed_at is NULL
-        and (hide_until is NULL or hide_until < current_timestamp)
-      ),
-      blocked_by as (
-        select
-          b.blocked as blocked,
-          b.blocker as blocker,
-          t.completed_at as completed_at
-        from blocks as b
-        inner join tasks as t on t.id = b.blocker
-        where t.completed_at is null
-        union
-        select
-          t.project as blocked,
-          t.id as blocker,
-          t.completed_at as completed_at
-        from tasks as t
-        where t.completed_at is null
-        and t.project is not null
-        and t.project <> t.id
-      )
-      select
-        t.id as id,
-        t.desc as desc,
-        t.project as project_id,
-        p.name as project_name,
-        t.task_type as task_type_id,
-        tt.short_name as short_task_type,
-        tt.workflow as workflow,
-        t.created_at,
-        t.hide_until,
-        t.completed_at
-      from undone_unsnoozed_tasks as t
-      left join blocked_by as b on t.id = b.blocked
-      left join projects as p on t.project = p.id
-      left join task_types as tt on t.task_type = tt.id
-      where b.blocker is null
-      order by coalesce(p.priority, 1) asc, p.id desc, t.created_at desc;
 
     CREATE TABLE project_templates(
       id integer primary key,
@@ -1027,31 +1114,3 @@ schema:
       id integer primary key,
       blocked integer,
       blocker integer);
-
-    CREATE VIEW generated_project_tasks as
-      select
-        tt.id as source,
-        format(tt.task_desc, pd.value) as desc,
-        p.id as project,
-        tt.task_type as task_type
-      from project_template_tasks as tt
-      inner join projects as p
-        on p.template = tt.template
-      left join project_data as pd
-        on tt.format_field = pd.field
-        and p.id = pd.project;
-
-    CREATE VIEW generated_project_links as
-      select
-        t1.project as project_id,
-        t1.id as blocker,
-        t2.id as blocked
-      from
-        tasks as t1,
-        tasks as t2,
-        project_template_task_links as ptl
-      where t1.source = ptl.blocker
-      and t2.source = ptl.blocked
-      and t1.project = t2.project;
-
-

@@ -1,3 +1,4 @@
+import copy
 import traceback
 import subprocess as sp
 import re
@@ -19,6 +20,8 @@ class StateMachine:
         self.states_file = states_file
         self.conn = connection
         self.data = {}
+        self.reload_state_file()
+        self.conn.executescript(self.states.get("schema_change_on_load", ""))
 
     def update_with_data(self, row):
         for key, value in self.data.items():
@@ -117,6 +120,10 @@ class StateMachine:
         if isinstance(query, str):
             self.exec_one(query)
         elif isinstance(query, dict):
+            if query.get("debug", False) == True:
+                query = copy.deepcopy(query)
+                query.pop("debug")
+                breakpoint()
             if "filename" in query:
                 self.write_file_command(**query)
             elif "bash" in query:
