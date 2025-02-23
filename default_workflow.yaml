@@ -567,7 +567,7 @@ tasks_of_type:
         - choices: |
             select 
               id as done_task_id,
-              dasc as task_description
+              desc as task_description
             from available_tasks
             where task_type_id = :task_type_id;
           format: "{task_description}"
