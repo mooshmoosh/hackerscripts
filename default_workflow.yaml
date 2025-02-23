@@ -21,6 +21,100 @@ current_tasks:
   queries:
     - "with cte as(select name as next_task_type_name from task_types where id = :next_task_type_id union all select null) select * from cte limit 1;"
   commands:
+    - command: "/npt"
+      to: modify_project_template
+      queries:
+        - "insert into project_templates(name) values (:__input) returning id as project_template_id;"
+    - command: "/mpt"
+      to: modify_project_template
+      queries:
+        - choices: "select id as project_template_id, name as project_template_name from project_templates;"
+          format: "{project_template_name}"
+          display: "Which template do you want to modify?"
+    - command: "/spt"
+      queries:
+        - choices: "select id as project_template_id, name as project_template_name from project_templates;"
+          display: "Which template should we use?"
+          format: "{project_template_name}"
+        - |
+          select case :__input
+            when '' then
+              :project_template_name || ' ' || datetime(current_timestamp, 'localtime')
+            else
+              :__input
+            end as new_project_name;
+        - |
+          insert into tasks(desc, task_type)
+          values (
+            'Call it done: '|| :new_project_name,
+            (
+              select id
+              from task_types
+              where short_name = 'P'
+            )
+          ) returning id as project_id;
+        - "update tasks set project = :project_id where id = :project_id;"
+        - "insert into projects(id, name, template) values (:project_id, :new_project_name, :project_template_id) on conflict do nothing"
+      to: new_project_from_template
+    - command: "/vwf"
+      to: waiting_fors
+    - command: "/wf"
+      queries:
+        - "create temporary table blocked(id integer);"
+        - select_from: "select id as selected_task_id, desc as task_decription from available_tasks;"
+          format: "{task_description}"
+          display: "Which tasks can't we do till '{__input}'?"
+          query: "insert into temp.blocked values (:selected_task_id);"
+        - "insert into tasks(desc, project, task_type) values (:__input, :project_id, (select id from task_types where short_name = 'WF')) returning id as new_task_id"
+        - "insert into blocks(blocked, blocker) select id, :new_task_id from temp.blocked;"
+        - "drop table temp.blocked;"
+    - command: "/bl"
+      queries:
+        - "create temporary table blockers(id integer);"
+        - "create temporary table blocked(id integer);"
+        - select_from: "select id as selected_task_id, desc as task_decription from available_tasks;"
+          display: "Which tasks need to be done first?"
+          query: "insert into temp.blockers values (:selected_task_id);"
+        - select_from: |
+            select
+              id as selected_task_id,
+              desc as task_decription
+            from available_tasks as at
+            left join temp.blockers as tb on at.id = tb.id
+            where tb.id is null;
+          display: "Which tasks are blocked?"
+          query: "insert into temp.blocked values (:selected_task_id);"
+        - |
+          insert into blocks(blocked, blocker)
+          select blocked.id, blocker.id from temp.blockers, temp.blocked
+        - "drop table temp.blockers;"
+        - "drop table temp.blocked;"
+    - command: "/pl"
+      queries:
+        - choices: |
+            select
+              id as project_id,
+              name as project_name
+            from active_projects;
+          format: "{project_name}"
+          display: "Which project"
+        - |
+          update projects
+          set priority = (select max(priority) + 1 from active_projects)
+          where id = :project_id
+    - command: "/ht"
+      queries:
+        - choices: "select id as current_task_id, desc as task_description from available_tasks;"
+          format: "{task_description}"
+          display: "Which task should be hidden till {__input}?"
+      queries:
+        - |
+          update tasks set hide_until = case :__input
+            when 'tomorrow' then datetime('now', '1 day', 'localtime', 'start of day', 'utc')
+            when 'next week' then datetime('now', '1 day', 'weekday 1', 'localtime', 'start of day', 'utc')
+            when 'weekend' then datetime('now', '1 day', 'weekday 6', 'localtime', 'start of day', 'utc')
+            else datetime(:__input, 'localtime', 'start of day', 'utc') end
+          where id = :current_task_id;
     - command: "/np"
       queries:
         - "insert into tasks(desc, task_type) values ('Come up with next actions: ' || :__input, (select id from task_types where short_name = 'P')) returning id as project_id"
@@ -200,6 +294,7 @@ current_tasks:
 current_tasks_help:
   display: |
     /p Switch a project to be top priority
+    /pl bump a project to be lowest priority
     /np (name) new project
     /vp view details about a project
     /os Organize stuff / switch to no project
@@ -211,21 +306,234 @@ current_tasks_help:
     /m (meeting name) Start taking notes
     /sq (search term) Search for questions
     /sn Search through notes / answers
-    /wf (thing) make a new waiting for task
+    /wf (thing) make a new waiting for task that blocks other tasks
     /vwf See the things I'm waiting for
     /tt set the type of the next task to create
     Add a new task (Quick)
-    snooze a task till tomorrow
-    snooze a task till the weekend
-    snooze a task till next week
-    modify project template
-    apply a template of tasks to a project
-    bump a project to be last
-    make one task block a set of tasks
-    make a bunch of tasks blocked by a new waiting for task
-    make a set of tasks block one task
+    /ht tomorrow: snooze a task till tomorrow
+    /ht weekend: snooze a task till the weekend
+    /ht next week: snooze a task till next week
+    /bl make a set of tasks each block another set of tasks
+    /spt (new name for project) start a project from a template
+    /npt (name) new project template
+    /mpt modify project template
   commands:
     - to: current_tasks
+
+modify_project_template:
+  queries:
+    - "select name as project_template_name from project_templates where id = :project_template_id;"
+    - |
+      select '
+      ' as __NL;
+  display: |
+    # {project_template_name} (/cn (name) to change the name)
+    /edit       edit the tasks, fields of the project
+    /deps       edit the dependancies between tasks
+    /b          Go back
+
+    ## Fields
+  tables:
+    - |
+      select distinct tf.name as field_name
+      from project_template_tasks as tt
+      inner join project_template_fields as tf
+        on tf.id = tt.format_field
+      where tt.template = :project_template_id;
+    - "{field_name}"
+    - ""
+    - "## Tasks"
+    - |
+      select
+        :__NL || format(tt.task_desc, '(' || tf.name || ')') || '(' || tts.short_name || ')' || :__NL as task_description,
+        bt.task_desc as blocked_task_description
+      from project_template_tasks as tt
+      inner join task_types as tts
+        on tt.task_type = tts.id
+      left join project_template_task_links as ttl
+        on tt.id = ttl.blocker
+      left join project_template_tasks as bt
+        on ttl.blocked = bt.id
+      left join project_template_fields as tf
+        on tt.format_field = tf.id
+      where tt.template = :project_template_id;
+    - display: "{task_description}    {blocked_task_description}"
+      groups:
+        - task_description
+  commands:
+    - command: "/cn"
+      queries:
+        - "update project_templates set name = :__input where id = :project_template_id;"
+    - command: "/edit"
+      queries:
+        - filename: ".temp_note.md"
+          template: "{line}"
+          query: |
+            select '# Tasks for template: ' || :project_template_name || :__NL || :__NL as line
+            union all
+            select tt.task_desc ||'|'|| coalesce(tf.name, '') ||'|'|| tts.short_name ||'|'|| tt.id || :__NL as line
+            from project_template_tasks as tt
+            inner join task_types as tts
+              on tt.task_type = tts.id
+            left join project_template_fields as tf
+              on tt.format_field = tf.id
+        - bash: "nvim .temp_note.md"
+          system: true
+        - "create temporary table updated_template_tasks(desc text, field_name text, short_task_type text, id integer);"
+        - bash: "cat .temp_note.md"
+          query: |
+            with new_id as (
+              select cast(coalesce(:_4, 0) as integer) as id
+            )
+            insert into temp.updated_template_tasks(desc, field_name, short_task_type, id)
+            values (:__1, :__2, :__3,
+              (select case id
+                when 0 then coalesce((select max(id)+1 from (select id from project_template_tasks union all select id from temp.updated_template_tasks)), 1)
+                else id
+                end
+              from new_id
+              limit 1)
+            )
+        - "delete from temp.updated_template_tasks where trim(desc) like '#%' or trim(desc) == '';"
+        - |
+          insert into project_template_fields(name)
+          select trim(utt.field_name)
+          from temp.updated_template_tasks as utt
+          left join project_template_fields as tf
+            on utt.field_name = tf.name
+          where tf.id is NULL;
+        - "delete from project_template_tasks where id in (select id from temp.updated_template_tasks);"
+        - insert into project_template_tasks(id, template, task_desc, format_field, task_type)
+          select
+            utt.id,
+            :project_template_id, 
+            trim(utt.desc),
+            tf.id,
+            coalesce(tts.id, (select id from task_types where short_name = 'S'))
+          from temp.updated_template_tasks as utt
+          left join project_template_fields as tf
+            on tf.name = trim(utt.field_name)
+          left join task_types as tts
+            on trim(utt.short_task_type) = tts.short_name;
+        - "drop table temp.updated_template_tasks;"
+    - command: "/deps"
+      queries:
+        - filename: ".temp_note.md"
+          template: "{line}"
+          query: |
+            select '# Dependancies for ' || :project_template_name || :__NL || :__NL as line
+            union all
+            select '## Tasks' || :__NL || :__NL as line
+            union all
+            select tt.id || ': ' || tt.task_desc || :__NL as line
+            from project_template_tasks as tt
+            where tt.template = :project_template_id
+            union all
+            select :__NL || '## Dependancies (blocker | blocked)' || :__NL || :__NL as line
+            union all
+            select distinct tl.blocker || '  |  ' || tl.blocked as line
+            from project_template_task_links as tl
+            inner join project_template_tasks as tt1
+              on tl.blocker = tt1.id
+            inner join project_template_tasks as tt2
+              on tl.blocked = tt2.id
+            where tt1.template = :project_template_id
+            and tt2.template = :project_template_id
+        - bash: "nvim .temp_note.md"
+          system: true
+        - "create temporary table updated_task_links(blocker text, blocked text);"
+        - bash: "cat .temp_note.md"
+          query: "insert into temp.updated_task_links(blocker, blocked) values (:__1, :__2)"
+        - "delete from temp.updated_task_links where trim(blocker) like '#%' or trim(blocker) == '';"
+        - |
+          delete from project_template_task_links where id in (
+            select distinct tl.id
+            from project_template_task_links as tl
+            inner join project_template_tasks as tt1
+              on tl.blocker = tt1.id
+            inner join project_template_tasks as tt2
+              on tl.blocked = tt2.id
+            where tt1.template = :project_template_id
+            and tt2.template = :project_template_id
+          );
+        - |
+          with correct_links as (
+            select
+              cast(coalesce(blocker, 0) as integer) as blocker,
+              cast(coalesce(blocked, 0) as integer) as blocked
+            from temp.updated_task_links
+          )
+          insert into project_template_task_links(blocker, blocked)
+          select blocker, blocked from correct_links
+          where blocker <> 0 and blocked <> 0;
+        - "drop table temp.updated_task_links;"
+    - command: "/b"
+      to: current_tasks
+
+new_project_from_template:
+  display: |
+    # {new_project_name}
+    ok            - create these tasks
+    /data         - pick a field to set
+    /set (field)  - pick a field to set
+    /b            - cancel and don't create tasks
+
+    ## Fields:
+  tables:
+    - |
+      select tf.name as field_name, pd.value
+      from
+        project_template_fields as tf
+        left join project_data as pd
+          on pd.field = tf.id
+      where pd.project = :project_id;
+    - "{field_name}: {field_value}"
+    - ""
+    - "# Tasks"
+    - "select desc as new_task_desc from generated_project_tasks where project = :project_id"
+    - "    {new_task_desc}"
+  commands:
+    - command: "/b"
+      to: current_tasks
+    - command: "ok"
+      to: current_tasks
+      queries:
+        - |
+          insert into tasks (source, desc, project, task_type)
+          select source, desc, project, task_type
+          from generated_project_tasks
+          where project = :project_id;
+        - insert into blocks(blocked, blocker)
+          select blocked, blocker
+          from generated_project_links
+          where project_id = :project_id
+
+waiting_fors:
+  display: |
+    # Waiting for list
+    
+    (/dt mark as done, /b go back)
+  tables:
+    - |
+      select
+        desc as waiting_for_task
+      from available_tasks
+      where short_task_type = 'WF'
+    - "{waiting_for_task}"
+  commands:
+    - command: "/b"
+      to: current_tasks
+    - command: "/dt"
+      queries:
+        - choices: |
+            select 
+              id as done_waiting_task_id,
+              dasc as waiting_for_task
+            from available_tasks
+            where short_task_type = 'WF';
+          format: "{waiting_for_task}"
+          display: "Which is now done?"
+        - "update tasks set completed_at = current_timestamp where id = :done_waiting_task_id;"
 
 break_down_task:
   display: |
@@ -371,6 +679,7 @@ modify_task:
           update tasks set hide_until = case :__input
             when 'tomorrow' then datetime('now', '1 day', 'localtime', 'start of day', 'utc')
             when 'next week' then datetime('now', '1 day', 'weekday 1', 'localtime', 'start of day', 'utc')
+            when 'weekend' then datetime('now', '1 day', 'weekday 6', 'localtime', 'start of day', 'utc')
             else datetime(:__input, 'localtime', 'start of day', 'utc') end
           where id = :current_task_id;
     - command: "/cp"
@@ -449,7 +758,11 @@ modify_project:
 
 review_notes:
   display: |
-    # Review: {task_description} (/b to go back, /en to edit notes, /d done, otherwise add tasks)
+    # Review: {task_description}
+    /b to go back                   /p switch projects
+    /np (project name) new project  /en to edit notes
+    /d done                         otherwise add tasks
+
     {meeting_notes}
     Project: {project_name}
 
@@ -467,6 +780,20 @@ review_notes:
       order by completed_at is not null, created_at desc;
     - "    {dependant_task}"
   commands:
+    - command: "/np"
+      queries:
+        - "insert into tasks(desc, task_type) values ('Come up with next actions: ' || :__input, (select id from task_types where short_name = 'P')) returning id as project_id"
+        - "update tasks set project = :project_id where id = :project_id;"
+        - "insert into projects(id, name) values (:project_id, :__input) on conflict do nothing"
+    - command: "/p"
+      queries:
+        - choices: |
+            select
+              id as project_id,
+              name as project_name
+            from active_projects;
+          format: "{project_name}"
+          display: "Which project"
     - command: "/d"
       to: current_tasks
       queries:
@@ -490,7 +817,7 @@ review_notes:
             (
               select id
               from task_types
-              where short_name = 'T'
+              where short_name = 'S'
             ),
             :project_id
           ) returning id as new_task_id;
@@ -559,7 +886,7 @@ schema:
       insert into questions_fts(rowid, desc) values(new.id, new.desc);
     END;
     CREATE TRIGGER questions_fts_au_new_is_question AFTER UPDATE on tasks
-    WHEN new.task_type = (select id from task_types where short_name = 'Q') and old.task_type != new.task_type
+    WHEN new.task_type = (select id from task_types where short_name = 'Q') and old.task_type <> new.task_type
     BEGIN
       insert into questions_fts(rowid, desc) values(new.id, new.desc);
     END;
@@ -653,7 +980,7 @@ schema:
         from tasks as t
         where t.completed_at is null
         and t.project is not null
-        and t.project != t.id
+        and t.project <> t.id
       )
       select
         t.id as id,
@@ -707,7 +1034,7 @@ schema:
         format(tt.task_desc, pd.value) as desc,
         p.id as project,
         tt.task_type as task_type
-      from project_template_task as tt
+      from project_template_tasks as tt
       inner join projects as p
         on p.template = tt.template
       left join project_data as pd

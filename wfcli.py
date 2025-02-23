@@ -1,3 +1,4 @@
+import traceback
 import subprocess as sp
 import re
 import sys
@@ -271,21 +272,24 @@ class StateMachine:
             cur = self.conn.cursor()
             for item in json_data:
                 item.update(self.data)
-                cur.execute(query, item)
+                self.exec_query_with_missing_key_handling(cur, query, item)
             self.conn.commit()
         elif query is not None and json_data is None:
             if multiline:
                 cur = self.conn.cursor()
-                for line in self.data["__stdout"].splitlines():
-                    item = {"__line": line}
-                    for idx, field in enumerate(line.split(sep)):
-                        item[f"__{idx+1}"] = field
-                    item.update(self.data)
-                    cur.execute(query, item)
+                lines = self.data["__stdout"].splitlines()
+                table = [{f"__{idx + 1}": col for idx, col in enumerate(line.split(sep))} for line in lines]
+                max_col_count = max(len(row) for row in table)
+                for line, row in zip(lines, table):
+                    row["__line"] = line
+                    for idx in range(max_col_count):
+                        row.setdefault(f"__{idx+1}", None)
+                    row.update(self.data)
+                    self.exec_query_with_missing_key_handling(cur, query, row)
                 self.conn.commit()
             else:
                 cur = self.conn.cursor()
-                cur.execute(query, self.data)
+                self.exec_query_with_missing_key_handling(cur, query, self.data)
                 self.conn.commit()
 
     def write_file_command(self, filename, template, query=None, append=False):
@@ -316,18 +320,18 @@ class StateMachine:
                     self.update_with_data(row)
                     f.write(template.format(**row))
 
-    def exec_one(self, query):
+    def exec_one(self, query, data=None):
         cur = self.conn.cursor()
-        self.exec_query_with_missing_key_handling(cur, query)
+        self.exec_query_with_missing_key_handling(cur, query, data)
         row = cur.fetchone()
         if cur.description is not None and row is not None:
             for col, value in zip(cur.description, row):
                 self.data[col[0]] = value
         self.conn.commit()
 
-    def exec_many(self, query):
+    def exec_many(self, query, data=None):
         cur = self.conn.cursor()
-        self.exec_query_with_missing_key_handling(cur, query)
+        self.exec_query_with_missing_key_handling(cur, query, data)
         if cur.description is None:
             return
         for row in cur.fetchall():
@@ -336,22 +340,28 @@ class StateMachine:
                 result[col[0]] = value
             yield result
 
-    def exec_query_with_missing_key_handling(self, cur, query):
+    def exec_query_with_missing_key_handling(self, cur, query, data=None):
+        if data is None:
+            data = self.data
         while True:
             try:
-                cur.execute(query, self.data)
+                cur.execute(query, data)
                 break
             except sqlite3.ProgrammingError as e:
                 pattern = re.compile(r"^[^:]*:(.*)\.$")
                 match = pattern.match(e.args[0])
                 if match is not None:
                     key_name = match.group(1)
-                    self.data[key_name] = None
+                    data[key_name] = None
                 else:
                     print(f"Error on query: {query}")
+                    traceback.print_exc()
+                    breakpoint()
                     raise
-            except:
+            except Exception as e:
                 print(f"Error on query: {query}")
+                traceback.print_exc()
+                breakpoint()
                 raise
 
 
