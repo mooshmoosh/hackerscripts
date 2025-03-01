@@ -21,6 +21,43 @@ current_tasks:
   queries:
     - "with cte as(select name as next_task_type_name from task_types where id = :next_task_type_id union all select null) select * from cte limit 1;"
   commands:
+    - command: "/msm"
+      to: modify_standing_meetings
+    - command: "/sm"
+      to: have_meeting
+      queries:
+        - choices: |
+            select id as meeting_id, name as meeting_name
+            from standing_meetings;
+          display: "which meetimg?"
+          format: "{meeting_name}"
+          display: "which meetimg?"
+        - | 
+            select
+              next_instance_id as meeting_instance_id,
+              name as meeting_name,
+              notes as meeting_notes
+            from next_standing_meetings 
+            where meeting_id = :meeting_id;
+        - |
+          insert into tasks (id, desc, task_type)
+          values (
+            :meeting_instance_id,
+            'Review notes for ' || :meeting_name || '(' || strftime('%F', datetime(current_timestamp, 'localtime')) || ')',
+            (select id from task_types where short_name = 'R')
+          ) on conflict do nothing;
+        - |
+          insert into tasks (desc, task_type)
+          values (
+            'Have meeting: ' || :meeting_name,
+            (select id from task_types where short_name = 'HM')
+          ) returning id as current_task_id;
+        - |
+          insert into blocks(blocked, blocker)
+          values (:meeting_instance_id, :current_task_id);
+        - |
+          insert into task_note_links(task_id, note_id)
+          values (:current_task_id, :meeting_instance_id);
     - command: "/npt"
       to: modify_project_template
       queries:
@@ -321,8 +358,38 @@ current_tasks_help:
     /spt (new name for project) start a project from a template
     /npt (name) new project template
     /mpt modify project template
+    /msm modify standing meetings
+    /sm start the next instance of a standing meeting
   commands:
     - to: current_tasks
+
+
+modify_standing_meetings:
+  display: |
+    # Configure standing meetings
+
+    ## Standing meetings
+  tables:
+    - "select name as meeting_name from standing_meetings;"
+    - "{meeting_name}"
+    - ""
+    - "## Groups"
+    - |
+      select
+        '  ' || sm.name as meeting_name,
+        mg.name || :NL as group_name
+      from standing_meeting_groups as mg
+      left join standing_meeting_group_mem as gl
+        on mg.id = gl.group_id
+      inner join standing_meetings as sm
+        on sm.id = gl.meeting;
+    - display: "{group_name}{meeting_name}"
+      groups:
+        - group_name
+  commands:
+    - command: "/b"
+      to: current_tasks
+        
 
 modify_project_template:
   queries:
@@ -599,18 +666,68 @@ break_down_task:
         - "insert into tasks(desc, project, task_type) values (:__input, :project_id, (select id from task_types where short_name = 'T')) returning id as new_task_id"
         - "insert into blocks(blocked, blocker) values (:current_task_id, :new_task_id);"
 
-answer_question:
+have_meeting:
   queries:
+    - |
+      select
+        note_id as note_id
+      from task_notes
+      where task_id = :current_task_id
+      limit 1;
+    - |
+      select 
+        sm.name as meeting_name
+      from standing_meeting_instances as mi
+      inner join standing_meetings as sm
+        on sm.id = mi.meeting
+      where mi.id = :note_id;
     - |
       insert into notes(id, note)
       values (
-        :current_task_id,
+        :note_id,
+        '# ' || :meeting_name
+        ) on conflict do nothing;
+    - "select note as notes_content from notes where id = :note_id;"
+    - edit: "{notes_content}"
+    - query: |
+        update notes
+        set note = :notes_content
+        where id = :note_id;
+  display: "Has the meeting now finished? (y/n)"
+  commands:
+    - command: "y"
+      to: current_tasks
+      queries:
+        - |
+          update tasks
+          set completed_at = current_timestamp
+          where id = :current_task_id;
+        - |
+          update standing_meeting_instances
+          set completed_at = current_timestamp
+          where id = :note_id;
+    - command: "n"
+      to: current_tasks
+
+
+answer_question:
+  queries:
+    - |
+      select
+        note_id as note_id
+      from task_notes
+      where task_id = current_task_id
+      limit 1;
+    - |
+      insert into notes(id, note)
+      values (
+        :note_id,
         '# ' || (
           select desc
           from tasks
           where id = :current_task_id
         )) on conflict do nothing;
-    - "select note as notes_content from notes where id = :current_task_id;"
+    - "select note as notes_content from notes where id = :note_id;"
     - filename: ".temp_note.md"
       template: "{notes_content}"
     - bash: "nvim .temp_note.md"
@@ -619,7 +736,7 @@ answer_question:
       query: |
         update notes
         set note = :__stdout
-        where id = :current_task_id;
+        where id = :note_id;
       multiline: false
   display: "Is this now done? (y/n)"
   commands:
@@ -1001,6 +1118,68 @@ schema_change_on_load: |
         on p.template = tt.template
       left join project_data as pd
         on (pd.field = tf.id and pd.project = p.id);
+
+    create table if not exists standing_meetings(
+      id integer prumary key,
+      created_at timestamp default current_timestamp,
+      name text
+    );
+
+    create table if not exists standing_meeting_groups(
+      id integer prumary key,
+      created_at timestamp default current_timestamp,
+      name text
+    );
+
+    create table if not exists standing_meeting_group_mem(
+      id integer prumary key,
+      meeting integer,
+      group_id integer
+    );
+
+    create table if not exists standing_meeting_instances(
+      id integer prumary key,
+      created_at timestamp default current_timestamp,
+      meeting integer,
+      completed_at timestamp
+    );
+
+    drop view if exists next_standing_meetings;
+    create view next_standing_meetings as 
+    select
+      m.id as meeting_id,
+      coalesce(mi.id, (select max(id)+1 from tasks)) as meeting_instance_id,
+      m.name as meeting_name,
+      coalesce(n.note, '# ' || m.name) as meeting_notes
+    from standing_meetings as m
+    left join standing_meeting_instances as mi
+      on mi.meeting = m.id
+      and mi.completed_at is null
+    left join notes as n
+      on n.id = mi.id;
+
+    create table if not exists task_note_links(
+      id integer primary key,
+      task_id integer
+      note_id integer
+    );
+
+    drop view if exists task_notes;
+    create view task_notes as
+    select
+      t.id as task_id,
+      coalesce(tn.note_id, t.id) as note_id
+    from tasks as t
+    left join task_note_links as tn
+      on tn.task_id = t.id;
+
+    create unique index if not exists
+      task_types_short_name_unique_idx
+      on task_types(short_name);
+
+    insert into task_types(short_name, name, workflow)
+      values ('HM', 'Have a meeting and take notes', 'have_meeting')
+      on conflict do nothing;
 
 schema:
   display: |
