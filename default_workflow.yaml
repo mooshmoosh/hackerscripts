@@ -52,7 +52,8 @@ current_tasks:
             :meeting_instance_id,
             'Review notes for ' || :meeting_name || ' (' || strftime('%F', datetime(current_timestamp, 'localtime')) || ')',
             (select id from task_types where short_name = 'R')
-          ) on conflict do nothing;
+          ) on conflict do update
+            set desc = excluded.desc;
         - |
           insert into tasks (desc, task_type)
           values (
@@ -853,6 +854,7 @@ modify_task:
             on conflict do update
             set note = excluded.note;
     - command: "/ma"
+      to: current_tasks
       queries:
         - choices: |
             select
@@ -861,17 +863,42 @@ modify_task:
             from standing_meetings;
           format: "{meeting_name}"
           display: "Which meeting?"
+        - | 
+            select
+              next_instance_id as meeting_instance_id,
+              meeting_name,
+              meeting_notes || :__NL || :task_description as meeting_notes
+            from next_standing_meetings 
+            where meeting_id = :meeting_id;
         - |
-          select
-            next_instance_id as meeting_notes_id,
-            meeting_notes || :__NL || :task_description as meeting_notes
-          from next_standing_meetings
-          where meeting_id = :meeting_id;
+          insert into standing_meeting_instances(id, meeting)
+          values (:meeting_instance_id, :meeting_id)
+            on conflict do nothing;
+        - |
+          insert into tasks (id, desc, task_type)
+          values (
+            :meeting_instance_id,
+            'Review notes for ' || :meeting_name || ' (' || strftime('%F', datetime(current_timestamp, 'localtime')) || ')',
+            (select id from task_types where short_name = 'R')
+          ) on conflict do nothing;
+        - |
+          insert into tasks (desc, task_type)
+          values (
+            'Have meeting: ' || :meeting_name,
+            (select id from task_types where short_name = 'HM')
+          ) returning id as new_have_meeting_id;
+        - |
+          insert into blocks(blocked, blocker)
+          values (:meeting_instance_id, :new_have_meeting_id);
+        - |
+          insert into task_note_links(task_id, note_id)
+          values (:new_have_meeting_id, :meeting_instance_id);
         - |
           insert into notes(id, note)
-          values (:meeting_notes_id, :meeting_notes)
+          values (:meeting_instance_id, :meeting_notes)
             on conflict do update
             set note = excluded.note;
+        - "update tasks set completed_at = current_timestamp where id = :current_task_id;"
     - command: "/pn"
       to: current_tasks
       queries:
