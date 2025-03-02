@@ -20,6 +20,9 @@ current_tasks:
       
   queries:
     - "with cte as(select name as next_task_type_name from task_types where id = :next_task_type_id union all select null) select * from cte limit 1;"
+    - |
+      select '
+      ' as NL;
   commands:
     - command: "/msm"
       to: modify_standing_meetings
@@ -367,26 +370,38 @@ current_tasks_help:
 modify_standing_meetings:
   display: |
     # Configure standing meetings
+    /nm (name)  - add a new meeting
+    /ng (name)  - add a new meeting group
+    /am         - add a meeting to a group
+    /rm         - remove a meeting from a group
 
     ## Standing meetings
   tables:
     - "select name as meeting_name from standing_meetings;"
     - "{meeting_name}"
     - ""
-    - "## Groups"
+    - |
+
+      ## Groups
     - |
       select
-        '  ' || sm.name as meeting_name,
-        mg.name || :NL as group_name
+        mg.name || :NL as group_name,
+        '  ' || coalesce(sm.name, '(None)') as meeting_name
       from standing_meeting_groups as mg
       left join standing_meeting_group_mem as gl
         on mg.id = gl.group_id
-      inner join standing_meetings as sm
+      left join standing_meetings as sm
         on sm.id = gl.meeting;
     - display: "{group_name}{meeting_name}"
       groups:
         - group_name
   commands:
+    - command: "/nm"
+      queries:
+        - "insert into standing_meetings (name) values (:__input);"
+    - command: "/ng"
+      queries:
+        - "insert into standing_meeting_groups (name) values (:__input);"
     - command: "/b"
       to: current_tasks
         
@@ -1120,25 +1135,25 @@ schema_change_on_load: |
         on (pd.field = tf.id and pd.project = p.id);
 
     create table if not exists standing_meetings(
-      id integer prumary key,
+      id integer primary key,
       created_at timestamp default current_timestamp,
       name text
     );
 
     create table if not exists standing_meeting_groups(
-      id integer prumary key,
+      id integer primary key,
       created_at timestamp default current_timestamp,
       name text
     );
 
     create table if not exists standing_meeting_group_mem(
-      id integer prumary key,
+      id integer primary key,
       meeting integer,
       group_id integer
     );
 
     create table if not exists standing_meeting_instances(
-      id integer prumary key,
+      id integer primary key,
       created_at timestamp default current_timestamp,
       meeting integer,
       completed_at timestamp
