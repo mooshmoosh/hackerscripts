@@ -19,7 +19,7 @@ class StateMachine:
         self.state = None
         self.states_file = states_file
         self.conn = connection
-        self.data = {}
+        self.data = {"__NL": "\n"}
         self.reload_state_file()
         self.conn.executescript(self.states.get("schema_change_on_load", ""))
 
@@ -134,6 +134,18 @@ class StateMachine:
                 self.multi_choice_command(**query)
             elif "prompt" in query:
                 self.get_prompt(**query)
+            elif "edit" in query:
+                self.edit_variable(**query)
+
+    def edit_variable(self, edit, default=""):
+        """
+        Launch nvim to edit a variable.
+        """
+        with open(".temp_note.md", "w") as f:
+            f.write(self.data.get(edit, default))
+        os.system("nvim .temp_note.md")
+        with open(".temp_note.md", "r") as f:
+            self.data[edit] = f.read()
 
     def get_prompt(self, prompt, target, display=""):
         """
