@@ -55,17 +55,29 @@ current_tasks:
           ) on conflict do update
             set desc = excluded.desc;
         - |
-          insert into tasks (desc, task_type)
+          select
+            coalesce(nl.task_id, (select max(id) + 1 from tasks))
+              as new_have_meeting_id
+          from notes as n
+          left join task_note_links as nl
+            on n.id = nl.note_id
+          where n.id = :meeting_instance_id;
+        - |
+          insert into tasks (id, desc, task_type)
           values (
+            :new_have_meeting_id,
             'Have meeting: ' || :meeting_name,
             (select id from task_types where short_name = 'HM')
-          ) returning id as current_task_id;
+          ) on conflict do nothing;
         - |
           insert into blocks(blocked, blocker)
-          values (:meeting_instance_id, :current_task_id);
+          values (:meeting_instance_id, :new_have_meeting_id)
+            on conflict do nothing;
         - |
           insert into task_note_links(task_id, note_id)
-          values (:current_task_id, :meeting_instance_id);
+          values (:new_have_meeting_id, :meeting_instance_id)
+            on conflict do nothing;
+        - "select :new_have_meeting_id as current_task_id;"
     - command: "/npt"
       to: modify_project_template
       queries:
@@ -882,17 +894,31 @@ modify_task:
             (select id from task_types where short_name = 'R')
           ) on conflict do nothing;
         - |
-          insert into tasks (desc, task_type)
+          with existing_task as (
+            select :meeting_instance_id as id
+          )
+          select
+            coalesce(nl.task_id, (select max(id) + 1 from tasks))
+              as new_have_meeting_id
+          from existing_task as n
+          left join task_note_links as nl
+            on n.id = nl.note_id
+          where n.id = :meeting_instance_id;
+        - |
+          insert into tasks (id, desc, task_type)
           values (
+            :new_have_meeting_id,
             'Have meeting: ' || :meeting_name,
             (select id from task_types where short_name = 'HM')
-          ) returning id as new_have_meeting_id;
+          ) on conflict do nothing;
         - |
           insert into blocks(blocked, blocker)
-          values (:meeting_instance_id, :new_have_meeting_id);
+          values (:meeting_instance_id, :new_have_meeting_id)
+            on conflict do nothing;
         - |
           insert into task_note_links(task_id, note_id)
-          values (:new_have_meeting_id, :meeting_instance_id);
+          values (:new_have_meeting_id, :meeting_instance_id)
+            on conflict do nothing;
         - |
           insert into notes(id, note)
           values (:meeting_instance_id, :meeting_notes)
@@ -1039,10 +1065,18 @@ review_notes:
 
     {meeting_notes}
     Project: {project_name}
+    Date: {note_created_at}
 
     # Tasks
   queries:
-    - "select desc as task_description, project_id, project_name from tasks_denorm where id = :current_task_id;"
+    - |
+      select
+        desc as task_description,
+        project_id,
+        project_name,
+        datetime(created_at, 'localtime') as note_created_at
+      from tasks_denorm
+      where id = :current_task_id;
     - "select note as meeting_notes from notes where id = :current_task_id"
   tables:
     - |
@@ -1285,6 +1319,14 @@ schema_change_on_load: |
       task_id integer,
       note_id integer
     );
+
+    create unique index if not exists
+    task_note_links_uniq_idx
+      on task_note_links(task_id, note_id);
+
+    create unique index if not exists
+    blocks_uniq_idx
+      on blocks(blocker, blocked);
 
     drop view if exists task_notes;
     create view task_notes as
