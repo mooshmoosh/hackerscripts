@@ -103,18 +103,20 @@ class StateMachine:
                 new_data[group] = ""
         return self.display_one(template, new_data)
 
-    def do_command(self, command, input_text):
+    def do_command(self, command, input_text, do_transition=True):
         self.data["__input"] = input_text
         for query in command.get("queries", []):
             try:
                 self.perform_query(query)
             except BreakProcedureLoop:
                 break
-        next_state = command.get("to", self.state)
-        if next_state == "__next" and "__next" in self.data:
-            next_state = self.data.pop("__next")
-        if next_state in self.states:
-            self.state = next_state
+
+        if do_transition:
+            next_state = command.get("to", self.state)
+            if next_state == "__next" and "__next" in self.data:
+                next_state = self.data.pop("__next")
+            if next_state in self.states:
+                self.state = next_state
 
     def perform_query(self, query):
         if isinstance(query, str):
@@ -136,6 +138,29 @@ class StateMachine:
                 self.get_prompt(**query)
             elif "edit" in query:
                 self.edit_variable(**query)
+            elif "workflow" in query:
+                self.execute_other_command(**query)
+
+    def execute_other_command(self, workflow, command, input_field=None):
+        """
+        execute a command from another workflow in the current context.
+        """
+        if workflow not in self.states:
+            # tried to execute a command from a workflow that doesn't exist
+            return
+
+        command_list = [c for c in self.states[workflow].get("commands", []) if c.get("command") == command]
+        if len(command_list) == 0:
+            # the command asked for doesn't exist in this workflow
+            return
+
+        if input_field is None:
+            input_text = ""
+        else:
+            input_text = self.data.get(input_field, "")
+        old_input = self.data.get("__input", "")
+        self.do_command(command=command_list[0], input_text=input_text, do_transition=False)
+        self.data["__input"] = old_input
 
     def edit_variable(self, edit, default=""):
         """
