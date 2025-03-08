@@ -1211,7 +1211,7 @@ schema_change_on_load: |
       left join projects as p on t.project = p.id
       left join task_types as tt on t.task_type = tt.id
       where b.blocker is null
-      order by coalesce(p.priority, 1) asc, p.id desc, t.created_at desc;
+      order by coalesce(p.priority, 1) desc, p.id desc, t.created_at desc;
 
     drop view if exists active_projects;
     CREATE VIEW active_projects as

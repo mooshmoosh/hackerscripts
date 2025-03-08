@@ -218,7 +218,8 @@ class StateMachine:
         all_rows = {}
         any_results = False
         try:
-            for idx, row in enumerate(self.exec_many(choices)):
+            rows = reversed(list(enumerate(reversed(list(self.exec_many(choices))))))
+            for idx, row in rows:
                 any_results = True
                 all_rows[idx] = row.copy()
                 self.update_with_data(row)
