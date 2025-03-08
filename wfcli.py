@@ -143,7 +143,7 @@ class StateMachine:
         """
         with open(".temp_note.md", "w") as f:
             f.write(self.data.get(edit, default))
-        os.system("nvim .temp_note.md")
+        os.system("pynvim .temp_note.md")
         with open(".temp_note.md", "r") as f:
             self.data[edit] = f.read()
 

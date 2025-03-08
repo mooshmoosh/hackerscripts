@@ -55,10 +55,13 @@ current_tasks:
           ) on conflict do update
             set desc = excluded.desc;
         - |
+          with existing_task as (
+            select :meeting_instance_id as id
+          )
           select
             coalesce(nl.task_id, (select max(id) + 1 from tasks))
               as new_have_meeting_id
-          from notes as n
+          from existing_task as n
           left join task_note_links as nl
             on n.id = nl.note_id
           where n.id = :meeting_instance_id;
@@ -774,7 +777,7 @@ answer_question:
       select
         note_id as note_id
       from task_notes
-      where task_id = current_task_id
+      where task_id = :current_task_id
       limit 1;
     - |
       insert into notes(id, note)
@@ -989,6 +992,10 @@ modify_task:
               id as selected_project_id,
               name as selected_project_name
             from active_projects
+            union all
+            select
+              null as project_id,
+              "(no project)" as project_name;
           format: "{selected_project_name}"
           display: "which project?"
         - "update tasks set project = :selected_project_id where id = :current_task_id"
