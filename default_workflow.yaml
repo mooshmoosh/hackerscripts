@@ -1352,6 +1352,14 @@ schema_change_on_load: |
       values ('HM', 'Have a meeting and take notes', 'have_meeting')
       on conflict do nothing;
 
+    insert into task_types(short_name, name)
+      values ('ER', 'Errands / shopping')
+      on conflict do nothing;
+
+    insert into task_types(short_name, name)
+      values ('CO', 'Computer / online shopping')
+      on conflict do nothing;
+
 schema:
   display: |
     CREATE TABLE tasks(
