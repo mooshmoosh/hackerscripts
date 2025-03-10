@@ -171,7 +171,6 @@ current_tasks:
         - choices: "select id as current_task_id, desc as task_description from available_tasks;"
           format: "{task_description}"
           display: "Which task should be hidden till {__input}?"
-      queries:
         - |
           update tasks set hide_until = case :__input
             when 'tomorrow' then datetime('now', '1 day', 'localtime', 'start of day', 'utc')
@@ -198,7 +197,7 @@ current_tasks:
     - command: "/vp"
       to: modify_project
       queries:
-        - choices: select id as project_id, name as project_name from active_projects;
+        - choices: select id as current_task_id, name as project_name from active_projects;
           format: "{project_name}"
           display: "Which project?"
     - command: "/?"
@@ -1023,8 +1022,10 @@ modify_project:
     {project_notes}
     # Tasks:
   queries:
-    - "select note as project_notes from notes where id = :project_id"
+    - "select :current_task_id as project_id"
     - "select name as project_name from projects where id = :project_id"
+    - "select '# ' || :project_name as project_notes;"
+    - "select note as project_notes from notes where id = :project_id"
   tables:
     - |
       select
@@ -1038,18 +1039,8 @@ modify_project:
       to: current_tasks
     - command: "/en"
       queries:
-        - "insert into notes(id, note) values (:project_id, '# ' || :project_name) on conflict do nothing;"
-        - filename: ".temp_note.md"
-          template: "{project_note_content}"
-          query: |
-              select
-                note as project_note_content
-              from notes
-              where id = :project_id
-        - bash: "nvim .temp_note.md"
-          system: true
-        - bash: "cat .temp_note.md"
-          query: "update notes set note = :__stdout where id = :project_id;"
+        - edit: project_notes
+        - "insert into notes(id, note) values (:project_id, :project_notes) on conflict do update set note = excluded.note;"
     - queries:
       - |
         insert into tasks(desc, task_type, project)
