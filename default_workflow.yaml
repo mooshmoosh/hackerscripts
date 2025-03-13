@@ -24,6 +24,33 @@ current_tasks:
       select '
       ' as NL;
   commands:
+    - command: "/ud"
+      queries:
+        - choices: |
+            select
+              id as current_task_id,
+              desc as task_description
+            from tasks
+            order by completed_at desc nulls last
+            limit 20;
+          format: "{task_description}"
+          display: "Which recently completed task?"
+        - "update tasks set completed_at = null where id = :current_task_id;"
+    - command: "/cp"
+      queries:
+        - choices: |
+            select
+              id as current_task_id,
+              desc,
+              short_task_type,
+              project_id,
+              project_name
+            from available_tasks
+            limit 100;
+          format: "{desc} ({short_task_type}) - {project_name}"
+          display: "which task?"
+        - workflow: "modify_task"
+          command: "/cp"
     - command: "/msm"
       to: modify_standing_meetings
     - command: "/sm"
@@ -138,19 +165,20 @@ current_tasks:
         - "create temporary table blocked(id integer);"
         - select_from: "select id as selected_task_id, desc as task_decription from available_tasks;"
           display: "Which tasks need to be done first?"
-          query: "insert into temp.blockers values (:selected_task_id);"
+          format: "{task_decription}"
+          query: "insert into temp.blockers(id) values (:selected_task_id);"
         - select_from: |
             select
               id as selected_task_id,
               desc as task_decription
-            from available_tasks as at
-            left join temp.blockers as tb on at.id = tb.id
-            where tb.id is null;
+            from available_tasks
+            where id not in (select id from temp.blockers);
           display: "Which tasks are blocked?"
-          query: "insert into temp.blocked values (:selected_task_id);"
+          format: "{task_decription}"
+          query: "insert into temp.blocked(id) values (:selected_task_id);"
         - |
           insert into blocks(blocked, blocker)
-          select blocked.id, blocker.id from temp.blockers, temp.blocked
+          select blocked.id, blocker.id from temp.blockers as blocker, temp.blocked as blocked
         - "drop table temp.blockers;"
         - "drop table temp.blocked;"
     - command: "/pl"
@@ -366,6 +394,7 @@ current_tasks_help:
     /bt break down a task into smaller pieces
     /st start a task
     /dt Task is done
+    /ud Un - do a recently completed task
     /m (meeting name) Start taking notes
     /sq (search term) Search for questions
     /sn Search through notes / answers
@@ -779,25 +808,22 @@ answer_question:
       where task_id = :current_task_id
       limit 1;
     - |
-      insert into notes(id, note)
-      values (
-        :note_id,
-        '# ' || (
+      with current_task as (
+        select :note_id as note_id
+      )
+      select coalesce(note, '# ' || (
           select desc
           from tasks
           where id = :current_task_id
-        )) on conflict do nothing;
-    - "select note as notes_content from notes where id = :note_id;"
-    - filename: ".temp_note.md"
-      template: "{notes_content}"
-    - bash: "nvim .temp_note.md"
-      system: true
-    - bash: "cat .temp_note.md"
-      query: |
-        update notes
-        set note = :__stdout
-        where id = :note_id;
-      multiline: false
+        )) as notes_content
+      from current_task as ct
+      left join notes on ct.note_id = notes.id;
+    - edit: "notes_content"
+    - |
+      insert into notes(id, note)
+      values (:note_id, :notes_content)
+      on conflict do update
+        set note = excluded.note;
   display: "Is this now done? (y/n)"
   commands:
     - command: "y"
