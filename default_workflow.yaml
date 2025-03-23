@@ -684,7 +684,8 @@ new_project_from_template:
           select source, desc, project, task_type
           from generated_project_tasks
           where project = :project_id;
-        - insert into blocks(blocked, blocker)
+        - |
+          insert into blocks(blocked, blocker)
           select blocked, blocker
           from generated_project_links
           where project_id = :project_id
@@ -1066,6 +1067,20 @@ modify_project:
     - command: "/en"
       queries:
         - edit: project_notes
+        - filter_prefix: "todo: "
+          variable: "project_notes"
+          query: |
+            insert into tasks(desc, task_type, project)
+            values (
+              :__1,
+              (
+                select id
+                from task_types
+                where short_name = 'T'
+              ),
+              :project_id
+            );
+
         - "insert into notes(id, note) values (:project_id, :project_notes) on conflict do update set note = excluded.note;"
     - queries:
       - |

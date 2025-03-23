@@ -140,6 +140,34 @@ class StateMachine:
                 self.edit_variable(**query)
             elif "workflow" in query:
                 self.execute_other_command(**query)
+            elif "filter_prefix" in query:
+                self.perform_filter(**query)
+
+    def perform_filter(self, filter_prefix, variable, sep=None, query=None):
+        """
+        split variable into lines
+        filter the lines that have the prefix
+        remove these from the text of the variable
+        remove their prefix
+        optionally split them on a separator
+
+        """
+        lines = self.data.get(variable, "").splitlines()
+        result = []
+        rows = []
+        for line in lines:
+            if line.startswith(filter_prefix):
+                remaining_line = line[len(filter_prefix) :]
+                if sep is None:
+                    row = {"__1": remaining_line}
+                else:
+                    row = {f"__{idx+1}": col for idx, col in enumerate(remaining_line.split(sep))}
+
+                self.update_with_data(row)
+                self.exec_one(query, row)
+            else:
+                result.append(line)
+        self.data[variable] = "\n".join(result)
 
     def execute_other_command(self, workflow, command, input_field=None):
         """
