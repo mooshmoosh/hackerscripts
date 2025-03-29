@@ -219,12 +219,14 @@ current_tasks:
     - command: "/bt"
       to: break_down_task
       queries:
+        - "select 'current_tasks' as back_to_page;"
         - choices: "select id as current_task_id, desc as task_description from available_tasks;"
           format: "{task_description}"
           display: "Which task should be broken down?"
     - command: "/vp"
       to: modify_project
       queries:
+        - "select 'current_tasks' as back_to_page;"
         - choices: select id as current_task_id, name as project_name from active_projects;
           format: "{project_name}"
           display: "Which project?"
@@ -276,6 +278,7 @@ current_tasks:
     - command: "/mt"
       to: "modify_task"
       queries:
+        - "select 'current_tasks' as back_to_page;"
         - choices: |
             select
               id as current_task_id,
@@ -895,7 +898,7 @@ modify_task:
             on conflict do update
             set note = excluded.note;
     - command: "/ma"
-      to: current_tasks
+      to: __next
       queries:
         - choices: |
             select
@@ -954,8 +957,9 @@ modify_task:
             on conflict do update
             set note = excluded.note;
         - "update tasks set completed_at = current_timestamp where id = :current_task_id;"
+        - "select coalesce(:back_to_page, 'current_tasks') as __next;"
     - command: "/pn"
-      to: current_tasks
+      to: __next
       queries:
         - "select project_id, project_name from tasks_denorm where id = :current_task_id;"
         - display: "Which project is this a note for?"
@@ -969,6 +973,7 @@ modify_task:
           ' || :task_description
           where id = :project_id;
         - "update tasks set completed_at = current_timestamp where id = :current_task_id;"
+        - "select coalesce(:back_to_page, 'current_tasks') as __next;"
     - command: "/pd"
       queries:
         - display: "Which project?"
@@ -1041,7 +1046,9 @@ modify_task:
           display: "Which type should it become?"
         - "update tasks set task_type = :selected_task_type_id where id = :current_task_id"
     - command: "/b"
-      to: current_tasks
+      to: __next
+      queries:
+        - "select coalesce(:back_to_page, 'current_tasks') as __next;"
 
 modify_project:
   display: |
@@ -1243,7 +1250,7 @@ schema_change_on_load: |
       left join projects as p on t.project = p.id
       left join task_types as tt on t.task_type = tt.id
       where b.blocker is null
-      order by coalesce(p.priority, 1) desc, p.id desc, t.created_at desc;
+      order by coalesce(p.priority, 1) desc, p.id desc, t.created_at asc;
 
     drop view if exists active_projects;
     CREATE VIEW active_projects as
