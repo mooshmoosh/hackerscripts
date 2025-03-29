@@ -1221,7 +1221,9 @@ review_notes:
       queries:
         - "update tasks set completed_at = current_timestamp where id = :current_task_id;"
     - command: "/b"
-      to: current_tasks
+      to: __next
+      queries:
+        - "select coalesce(:back_to_page, 'current_tasks') as __next;"
     - command: "/en"
       queries:
         - "insert into notes(id, note) values (:current_task_id, '# ' || :task_description) on conflict do nothing;"
