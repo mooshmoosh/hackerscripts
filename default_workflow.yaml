@@ -24,6 +24,8 @@ current_tasks:
       select '
       ' as NL;
   commands:
+    - command: "/rt"
+      to: review_all_tasks
     - command: "/ud"
       queries:
         - choices: |
@@ -372,6 +374,7 @@ current_tasks:
               desc as task_description,
               coalesce(workflow, 'answer_question')  as __next
             from available_tasks;
+        - "select 'current_tasks' as back_to_page;"
     - queries:
         - |
           insert into tasks(desc, project, task_type)
@@ -384,7 +387,6 @@ current_tasks:
               where short_name = 'S'
             ))
           );
-
 current_tasks_help:
   display: |
     /p Switch a project to be top priority
@@ -414,10 +416,69 @@ current_tasks_help:
     /mpt modify project template
     /msm modify standing meetings
     /sm start the next instance of a standing meeting
+    /rt review all tasks
   commands:
     - to: current_tasks
 
+review_all_tasks:
+  display: |
+    # Review task
 
+    Task:    {task_description}
+    Type:    {task_type}
+    Project: {project_name}
+
+    Last looked at:
+      {last_review_time} ({recentp})
+
+    /bt breakdown this task
+    /dt this is done
+    /mt modify
+    /st start this task
+    /b go back
+    /n move on to next task
+  queries:
+    - |
+      select
+        id as current_task_id,
+        desc as task_description,
+        task_type,
+        project_name,
+        coalesce(workflow, 'answer_question') as workflow,
+        coalesce(datetime(last_review_time, 'localtime'), '') as last_review_time,
+        case datetime(last_review_time, '1 hour') > current_timestamp
+          when 1 then 'Recently'
+          else 'Not that recently'
+        end as recentp
+      from available_tasks
+      order by last_review_time asc nulls first, created_at asc
+      limit 1
+  commands:
+    - command: "/st"
+      to: "__next"
+      queries:
+        - "select 'review_all_tasks' as back_to_page;"
+        - 'select :workflow as __next'
+    - command: "/dt"
+      queries:
+        - "update tasks set completed_at = current_timestamp where id = :current_task_id;"
+    - command: "/mt"
+      to: "modify_task"
+      queries:
+        - "select 'review_all_tasks' as back_to_page;"
+    - command: "/bt"
+      to: break_down_task
+      queries:
+        - "select 'review_all_tasks' as back_to_page;"
+    - command: "/b"
+      to: current_tasks
+    - command: "/n"
+      queries:
+      - |
+        insert into last_task_review_times
+        values (:current_task_id, current_timestamp)
+        on conflict do update
+        set last_review_time = excluded.last_review_time;
 modify_standing_meetings:
   display: |
     # Configure standing meetings
@@ -754,7 +815,9 @@ break_down_task:
     - "    {blocker_task_description}"
   commands:
     - command: "/b"
-      to: current_tasks
+      to: __next
+      queries:
+        - "select coalesce(:back_to_page, 'current_tasks') as __next;"
     - queries:
         - "insert into tasks(desc, project, task_type) values (:__input, :project_id, (select id from task_types where short_name = 'T')) returning id as new_task_id"
         - "insert into blocks(blocked, blocker) values (:current_task_id, :new_task_id);"
@@ -831,14 +894,17 @@ answer_question:
   display: "Is this now done? (y/n)"
   commands:
     - command: "y"
-      to: current_tasks
+      to: __next
       queries:
+        - "select coalesce(:back_to_page, 'current_tasks') as __next;"
         - |
           update tasks
           set completed_at = current_timestamp
           where id = :current_task_id;
     - command: "n"
-      to: current_tasks
+      to: __next
+      queries:
+        - "select coalesce(:back_to_page, 'current_tasks') as __next;"
 
 modify_task:
   queries:
@@ -998,8 +1064,9 @@ modify_task:
         - "insert into project_template_fields(id, name) values (:field_id, field_name) on conflict do nothing;"
         - "insert into project_data(project, field, value) values (:project_id, :field_id, :field_valuie);"
     - command: "/np"
-      to: current_tasks
+      to: __next
       queries:
+        - "select coalesce(:back_to_page, 'current_tasks') as __next;"
         - "insert into projects(id, name) values (:current_task_id, :task_description) on conflict do nothing"
         - |
           update tasks set
@@ -1188,6 +1255,11 @@ brainstorm_actions:
       query: "update notes set note = :__stdout where id = :current_task_id;"
 
 schema_change_on_load: |
+    create table if not exists last_task_review_times(
+      id integer primary key,
+      last_review_time timestamp
+    );
+
     drop view if exists tasks_denorm;
     create view tasks_denorm as
       select
@@ -1241,14 +1313,17 @@ schema_change_on_load: |
         p.name as project_name,
         t.task_type as task_type_id,
         tt.short_name as short_task_type,
+        tt.name as task_type,
         tt.workflow as workflow,
         t.created_at,
         t.hide_until,
-        t.completed_at
+        t.completed_at,
+        ltrt.last_review_time as last_review_time
       from undone_unsnoozed_tasks as t
       left join blocked_by as b on t.id = b.blocked
       left join projects as p on t.project = p.id
       left join task_types as tt on t.task_type = tt.id
+      left join last_task_review_times as ltrt on t.id = ltrt.id
       where b.blocker is null
       order by coalesce(p.priority, 1) desc, p.id desc, t.created_at asc;
 
