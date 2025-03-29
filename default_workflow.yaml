@@ -916,7 +916,8 @@ modify_task:
         project_id as project_id,
         project_name,
         created_at as task_created_at_time,
-        hide_until as task_hidden_till_time
+        hide_until as task_hidden_till_time,
+        urgent_after as urgent_after_time
       from tasks_denorm
       where id = :current_task_id
   display: |
@@ -930,6 +931,11 @@ modify_task:
       /ht tomorrow
       /ht next week
       /ht 2025-06-01
+    urgent after /ua: {urgent_after_time}
+      /ua tomorrow
+      /ua next week
+      /ua 2025-06-01
+      /nu not urgent
 
     /np   this is a new project
     /pd   this is a piece of data for a project
@@ -1084,6 +1090,25 @@ modify_task:
             when 'weekend' then datetime('now', '1 day', 'weekday 6', 'localtime', 'start of day', 'utc')
             else datetime(:__input, 'localtime', 'start of day', 'utc') end
           where id = :current_task_id;
+    - command: "/ua"
+      queries:
+        - |
+          insert into urgent_after_task_times
+          (id, urgent_after)
+          values (
+            :current_task_id,
+            case :__input
+              when 'tomorrow' then datetime('now', '1 day', 'localtime', 'start of day', 'utc')
+              when 'next week' then datetime('now', '1 day', 'weekday 1', 'localtime', 'start of day', 'utc')
+              when 'weekend' then datetime('now', '1 day', 'weekday 6', 'localtime', 'start of day', 'utc')
+              else datetime(:__input, 'localtime', 'start of day', 'utc')
+            end
+          )
+          on conflict do update
+          set urgent_after = excluded.urgent_after;
+    - command: "/nu"
+      queries:
+        - "delete from urgent_after_task_times where id = :current_task_id"
     - command: "/cp"
       queries:
         - choices: |
@@ -1255,6 +1280,11 @@ schema_change_on_load: |
       last_review_time timestamp
     );
 
+    create table if not exists urgent_after_task_times(
+      id integer primary key,
+      urgent_after timestamp
+    );
+
     drop view if exists tasks_denorm;
     create view tasks_denorm as
       select
@@ -1268,12 +1298,18 @@ schema_change_on_load: |
         coalesce(tt.workflow, 'current_tasks') as workflow,
         t.created_at,
         t.hide_until,
-        t.completed_at
+        t.completed_at,
+        ltrt.last_review_time as last_review_time,
+        uatt.urgent_after
       from tasks as t
       left join task_types as tt
       on tt.id = t.task_type
       left join projects as p
-      on t.project = p.id;
+      on t.project = p.id
+      left join last_task_review_times as ltrt
+      on t.id = ltrt.id
+      left join urgent_after_task_times as uatt
+      on uatt.id = t.id;
 
     drop view if exists available_tasks;
     CREATE VIEW available_tasks as
@@ -1309,18 +1345,25 @@ schema_change_on_load: |
         t.task_type as task_type_id,
         tt.short_name as short_task_type,
         tt.name as task_type,
-        tt.workflow as workflow,
+        coalesce(tt.workflow, 'current_tasks') as workflow,
         t.created_at,
         t.hide_until,
         t.completed_at,
-        ltrt.last_review_time as last_review_time
+        ltrt.last_review_time as last_review_time,
+        uatt.urgent_after
       from undone_unsnoozed_tasks as t
       left join blocked_by as b on t.id = b.blocked
       left join projects as p on t.project = p.id
       left join task_types as tt on t.task_type = tt.id
       left join last_task_review_times as ltrt on t.id = ltrt.id
+      left join urgent_after_task_times as uatt
+      on uatt.id = t.id
       where b.blocker is null
-      order by coalesce(p.priority, 1) desc, p.id desc, t.created_at asc;
+      order by
+        coalesce(uatt.urgent_after > current_timestamp, 0),
+        coalesce(p.priority, 1) desc,
+        p.id desc,
+        t.created_at asc;
 
     drop view if exists active_projects;
     CREATE VIEW active_projects as
