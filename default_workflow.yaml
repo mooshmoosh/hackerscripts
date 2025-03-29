@@ -781,6 +781,7 @@ tasks_of_type:
               coalesce(workflow, 'answer_question')  as __next
             from available_tasks
             where task_type_id = :task_type_id;
+        - "select 'tasks_of_type' as back_to_page;"
     - command: "/b"
       to: current_tasks
     - command: "/dt"
@@ -1217,8 +1218,9 @@ review_notes:
           display: "Which project"
         - "update tasks set project = :project_id where id = :current_task_id"
     - command: "/d"
-      to: current_tasks
+      to: __next
       queries:
+        - "select coalesce(:back_to_page, 'current_tasks') as __next;"
         - "update tasks set completed_at = current_timestamp where id = :current_task_id;"
     - command: "/b"
       to: __next
@@ -1246,15 +1248,6 @@ review_notes:
             :project_id
           ) returning id as new_task_id;
       - "insert into blocks(blocker, blocked) values (:current_task_id, :new_task_id);"
-
-brainstorm_actions:
-  queries:
-    - filename: ".temp_note.md"
-      template: "# Come up with next actions for {task_description}"
-    - bash: "nvim .temp_note.md"
-      system: true
-    - bash: "cat .temp_note.md"
-      query: "update notes set note = :__stdout where id = :current_task_id;"
 
 schema_change_on_load: |
     create table if not exists last_task_review_times(
