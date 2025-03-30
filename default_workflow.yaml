@@ -458,7 +458,7 @@ review_all_tasks:
       to: "__next"
       queries:
         - "select 'review_all_tasks' as back_to_page;"
-        - 'select :workflow as __next'
+        - "select coalesce(:workflow, 'answer_question') as __next"
     - command: "/dt"
       queries:
         - "update tasks set completed_at = current_timestamp where id = :current_task_id;"
@@ -924,7 +924,7 @@ modify_task:
     # Modify task
 
     Description /cd: {task_description}
-    Type /tt:        {task_type}
+    Type /ct:        {task_type}
     Project /cp:     {project_name}
     created:         {task_created_at_time}
     hidden till /ht: {task_hidden_till_time}
@@ -1126,7 +1126,7 @@ modify_task:
     - command: "/cd"
       queries:
         - "update tasks set desc = :__input where id = :current_task_id"
-    - command: "/tt"
+    - command: "/ct"
       queries:
         - choices: |
             select
@@ -1163,7 +1163,9 @@ modify_project:
     - "    {task_description}"
   commands:
     - command: "/b"
-      to: current_tasks
+      to: __next
+      queries:
+        - "select coalesce(:back_to_page, 'current_tasks') as __next;"
     - command: "/en"
       queries:
         - edit: project_notes
@@ -1274,6 +1276,10 @@ review_notes:
           ) returning id as new_task_id;
       - "insert into blocks(blocker, blocked) values (:current_task_id, :new_task_id);"
 
+command_library:
+  commands:
+    
+
 schema_change_on_load: |
     create table if not exists last_task_review_times(
       id integer primary key,
@@ -1295,7 +1301,7 @@ schema_change_on_load: |
         t.task_type as task_type_id,
         tt.short_name as short_task_type,
         tt.name as task_type,
-        coalesce(tt.workflow, 'current_tasks') as workflow,
+        coalesce(tt.workflow, 'answer_question') as workflow,
         t.created_at,
         t.hide_until,
         t.completed_at,
@@ -1345,7 +1351,7 @@ schema_change_on_load: |
         t.task_type as task_type_id,
         tt.short_name as short_task_type,
         tt.name as task_type,
-        coalesce(tt.workflow, 'current_tasks') as workflow,
+        coalesce(tt.workflow, 'answer_question') as workflow,
         t.created_at,
         t.hide_until,
         t.completed_at,
