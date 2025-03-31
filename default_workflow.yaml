@@ -17,7 +17,7 @@ current_tasks:
     - display: "{project_name}    {desc} ({short_task_type})"
       groups:
         - project_name
-      
+
   queries:
     - "with cte as(select name as next_task_type_name from task_types where id = :next_task_type_id union all select null) select * from cte limit 1;"
     - |
@@ -64,12 +64,12 @@ current_tasks:
           display: "which meetimg?"
           format: "{meeting_name}"
           display: "which meetimg?"
-        - | 
+        - |
             select
               next_instance_id as meeting_instance_id,
               meeting_name,
               meeting_notes
-            from next_standing_meetings 
+            from next_standing_meetings
             where meeting_id = :meeting_id;
         - |
           insert into standing_meeting_instances(id, meeting)
@@ -289,7 +289,6 @@ current_tasks:
               project_id,
               project_name
             from available_tasks
-            limit 100;
           format: "{desc} ({short_task_type}) - {project_name}"
           display: "which task?"
     - command: "/dt"
@@ -302,7 +301,6 @@ current_tasks:
               project_id,
               project_name
             from available_tasks
-            limit 100;
           format: "{desc} ({short_task_type}) - {project_name}"
           display: "which task?"
         - "update tasks set completed_at = current_timestamp where id = :task_id;"
@@ -315,13 +313,22 @@ current_tasks:
             :review_meeting_task_desc,
             (select id from task_types where short_name='R')
           ) returning id as meeting_id
-        - filename: ".temp_note.md"
-          template: "# {__input}"
-        - bash: "nvim .temp_note.md"
-          system: true
-        - bash: "cat .temp_note.md"
-          query: "insert into notes(id, note) values(:meeting_id, :__stdout);"
-          multiline: false
+        - "select '# {__input}' as notes_content"
+        - edit: notes_content
+        - filter_prefix: "todo: "
+          variable: "notes_content"
+          query: |
+            insert into tasks(desc, task_type, project)
+            values (
+              :__1,
+              (
+                select id
+                from task_types
+                where short_name = 'T'
+              ),
+              (select project from tasks where id = :current_task_id)
+            );
+        - "insert into notes(id, note) values(:meeting_id, :notes_content);"
     - command: "/sq"
       queries:
         - choices: |
@@ -542,7 +549,7 @@ modify_standing_meetings:
         - "delete from standing_meeting_group_mem where group_id = :meeting_group_id and meeting = :meeting_id;"
     - command: "/b"
       to: current_tasks
-        
+
 
 modify_project_template:
   queries:
@@ -632,7 +639,7 @@ modify_project_template:
         - insert into project_template_tasks(id, template, task_desc, format_field, task_type)
           select
             utt.id,
-            :project_template_id, 
+            :project_template_id,
             trim(utt.desc),
             tf.id,
             coalesce(tts.id, (select id from task_types where short_name = 'S'))
@@ -713,7 +720,7 @@ new_project_from_template:
     - "{field_name}: {field_value}"
     - ""
     - |
-      
+
       # Tasks
     - "select desc as new_task_desc from generated_project_tasks where project = :project_id"
     - "    {new_task_desc}"
@@ -757,7 +764,7 @@ new_project_from_template:
 tasks_of_type:
   display: |
     # {task_type_name} Tasks
-    
+
     (/dt mark as done, /st start task, /b go back)
   tables:
     - |
@@ -787,7 +794,7 @@ tasks_of_type:
     - command: "/dt"
       queries:
         - choices: |
-            select 
+            select
               id as done_task_id,
               desc as task_description
             from available_tasks
@@ -832,7 +839,7 @@ have_meeting:
       where task_id = :current_task_id
       limit 1;
     - |
-      select 
+      select
         sm.name as meeting_name
       from standing_meeting_instances as mi
       inner join standing_meetings as sm
@@ -917,7 +924,8 @@ modify_task:
         project_name,
         created_at as task_created_at_time,
         hide_until as task_hidden_till_time,
-        urgent_after as urgent_after_time
+        urgent_after as urgent_after_time,
+        coalesce(urgent_after < current_timestamp, 0) as is_urgent
       from tasks_denorm
       where id = :current_task_id
   display: |
@@ -931,7 +939,8 @@ modify_task:
       /ht tomorrow
       /ht next week
       /ht 2025-06-01
-    urgent after /ua: {urgent_after_time}
+    urgent after /ua: {urgent_after_time} ({is_urgent})
+      /ua now
       /ua tomorrow
       /ua next week
       /ua 2025-06-01
@@ -951,7 +960,7 @@ modify_task:
         - choices: |
             select
               id as group_id,
-              name as group_name 
+              name as group_name
             from standing_meeting_groups;
           format: "{group_name}"
           display: "Which group?"
@@ -980,12 +989,12 @@ modify_task:
             from standing_meetings;
           format: "{meeting_name}"
           display: "Which meeting?"
-        - | 
+        - |
             select
               next_instance_id as meeting_instance_id,
               meeting_name,
               meeting_notes || :__NL || :task_description as meeting_notes
-            from next_standing_meetings 
+            from next_standing_meetings
             where meeting_id = :meeting_id;
         - |
           insert into standing_meeting_instances(id, meeting)
@@ -1098,6 +1107,7 @@ modify_task:
           values (
             :current_task_id,
             case :__input
+              when 'now' then current_timestamp
               when 'tomorrow' then datetime('now', '1 day', 'localtime', 'start of day', 'utc')
               when 'next week' then datetime('now', '1 day', 'weekday 1', 'localtime', 'start of day', 'utc')
               when 'weekend' then datetime('now', '1 day', 'weekday 6', 'localtime', 'start of day', 'utc')
@@ -1256,12 +1266,22 @@ review_notes:
     - command: "/en"
       queries:
         - "insert into notes(id, note) values (:current_task_id, '# ' || :task_description) on conflict do nothing;"
-        - filename: ".temp_note.md"
-          template: "{meeting_notes}"
-        - bash: "nvim .temp_note.md"
-          system: true
-        - bash: "cat .temp_note.md"
-          query: "update notes set note = :__stdout where id = :current_task_id;"
+        - "select note as meeting_notes from notes where id = :current_task_id"
+        - edit: meeting_notes
+        - filter_prefix: "todo: "
+          variable: "meeting_notes"
+          query: |
+            insert into tasks(desc, task_type, project)
+            values (
+              :__1,
+              (
+                select id
+                from task_types
+                where short_name = 'T'
+              ),
+              (select project from tasks where id = :current_task_id)
+            );
+        - "update notes set note = :meeting_notes where id = :current_task_id;"
     - queries:
       - |
         insert into tasks(desc, task_type, project)
@@ -1278,7 +1298,7 @@ review_notes:
 
 command_library:
   commands:
-    
+
 
 schema_change_on_load: |
     create table if not exists last_task_review_times(
@@ -1366,7 +1386,7 @@ schema_change_on_load: |
       on uatt.id = t.id
       where b.blocker is null
       order by
-        coalesce(uatt.urgent_after > current_timestamp, 0),
+        coalesce(uatt.urgent_after < current_timestamp, 0) asc,
         coalesce(p.priority, 1) desc,
         p.id desc,
         t.created_at asc;
@@ -1466,7 +1486,7 @@ schema_change_on_load: |
     );
 
     drop view if exists next_standing_meetings;
-    create view next_standing_meetings as 
+    create view next_standing_meetings as
     select
       m.id as meeting_id,
       coalesce(mi.id, (select max(id)+1 from tasks)) as next_instance_id,
