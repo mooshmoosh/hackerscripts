@@ -24,6 +24,28 @@ current_tasks:
       select '
       ' as NL;
   commands:
+    - command: "/ct"
+      queries:
+        - choices: |
+            select
+              id as current_task_id,
+              desc,
+              short_task_type,
+              project_id,
+              project_name
+            from available_tasks
+          format: "{desc} ({short_task_type}) - {project_name}"
+          display: "which task?"
+        - choices: |
+            select
+              id as selected_task_type_id,
+              short_name as selected_task_short_name,
+              name as selected_task_type_name
+            from task_types
+            where short_name <> 'P';
+          format: "{selected_task_type_name} ({selected_task_short_name})"
+          display: "Which type should it become?"
+        - "update tasks set task_type = :selected_task_type_id where id = :current_task_id"
     - command: "/rt"
       to: review_all_tasks
     - command: "/ud"
@@ -34,7 +56,6 @@ current_tasks:
               desc as task_description
             from tasks
             order by completed_at desc nulls last
-            limit 20;
           format: "{task_description}"
           display: "Which recently completed task?"
         - "update tasks set completed_at = null where id = :current_task_id;"
@@ -48,7 +69,6 @@ current_tasks:
               project_id,
               project_name
             from available_tasks
-            limit 100;
           format: "{desc} ({short_task_type}) - {project_name}"
           display: "which task?"
         - workflow: "modify_task"
@@ -339,17 +359,13 @@ current_tasks:
           format: "{question_text}"
           display: "Which matching question?"
         - "insert into notes(id, note) values (:question_id, '') on conflict do nothing;"
-        - filename: ".temp_note.md"
-          template: "{question_answer_content}"
-          query: |
-              select
-                note as question_answer_content
-              from notes
-              where id = :question_id
-        - bash: "nvim .temp_note.md"
-          system: true
-        - bash: "cat .temp_note.md"
-          query: "update notes set note = :__stdout where id = :question_id;"
+        - |
+          select
+            note as question_answer_content
+          from notes
+          where id = :question_id;
+        - edit: question_answer_content
+        - "update notes set note = :question_answer_content where id = :question_id;"
     - command: "/sn"
       queries:
         - choices: |
@@ -364,12 +380,8 @@ current_tasks:
             order by rank
           format: "{task_description}"
           display: "Which matching question / meeting?"
-        - filename: ".temp_note.md"
-          template: "{question_answer_content}"
-        - bash: "nvim .temp_note.md"
-          system: true
-        - bash: "cat .temp_note.md"
-          query: "update notes set note = :__stdout where id = :note_id;"
+        - edit: question_answer_content
+        - "update notes set note = :question_answer_content where id = :note_id;"
     - command: "/st"
       to: "__next"
       queries:
@@ -424,6 +436,7 @@ current_tasks_help:
     /msm modify standing meetings
     /sm start the next instance of a standing meeting
     /rt review all tasks
+    /ct change the type of a task
   commands:
     - to: current_tasks
 
@@ -442,6 +455,7 @@ review_all_tasks:
     /dt this is done
     /mt modify
     /st start this task
+    /vp go to the project page for this task
     /b go back
     /n move on to next task
   queries:
@@ -461,6 +475,11 @@ review_all_tasks:
       order by last_review_time asc nulls first, created_at asc
       limit 1
   commands:
+    - command: "/vp"
+      to: modify_project
+      queries:
+        - "select 'review_all_tasks' as back_to_page;"
+        - "select project as current_task_id from tasks where id = :current_task_id;"
     - command: "/st"
       to: "__next"
       queries:
@@ -853,6 +872,20 @@ have_meeting:
         ) on conflict do nothing;
     - "select note as notes_content from notes where id = :note_id;"
     - edit: notes_content
+    - filter_prefix: "todo: "
+      variable: "notes_content"
+      query: |
+        insert into tasks(desc, task_type, project)
+        values (
+          :__1,
+          (
+            select id
+            from task_types
+            where short_name = 'T'
+          ),
+          (select project from tasks where id = :current_task_id)
+        );
+
     - |
       update notes
       set note = :notes_content
@@ -894,6 +927,20 @@ answer_question:
       from current_task as ct
       left join notes on ct.note_id = notes.id;
     - edit: "notes_content"
+    - filter_prefix: "todo: "
+      variable: "notes_content"
+      query: |
+        insert into tasks(desc, task_type, project)
+        values (
+          :__1,
+          (
+            select id
+            from task_types
+            where short_name = 'T'
+          ),
+          (select project from tasks where id = :current_task_id)
+        );
+
     - |
       insert into notes(id, note)
       values (:note_id, :notes_content)
