@@ -333,7 +333,7 @@ current_tasks:
             :review_meeting_task_desc,
             (select id from task_types where short_name='R')
           ) returning id as meeting_id
-        - "select '# {__input}' as notes_content"
+        - "select '# ' || :__input as notes_content"
         - edit: notes_content
         - filter_prefix: "todo: "
           variable: "notes_content"
@@ -1202,7 +1202,7 @@ modify_task:
 
 modify_project:
   display: |
-    # Project: {project_name} (/b to go back, /en to edit notes, otherwise add tasks)
+    # Project: {project_name} (/b to go back, /en to edit notes, /q add a question, otherwise add tasks)
     {project_notes}
     # Tasks:
   queries:
@@ -1241,6 +1241,19 @@ modify_project:
             );
 
         - "insert into notes(id, note) values (:project_id, :project_notes) on conflict do update set note = excluded.note;"
+    - command: "/q"
+      queries:
+      - |
+        insert into tasks(desc, task_type, project)
+          values (
+            :__input,
+            (
+              select id
+              from task_types
+              where short_name = 'Q'
+            ),
+            :project_id
+          );
     - queries:
       - |
         insert into tasks(desc, task_type, project)
