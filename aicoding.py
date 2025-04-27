@@ -45,7 +45,7 @@ class System:
     def __init__(
         self,
         procedures: dict[str, "BaseProcedure"],
-        llm_manager: "LLMManager",
+        llm_manager: "BaseLLMManager",
         sql_manager: "SQLManager",
         verbose: bool = False,
     ):
@@ -1271,12 +1271,7 @@ class SQLManager:
         self.connection.close()
 
 
-class LLMManager:
-    def __init__(self, llm_host) -> None:
-        self.sql_manager = SQLManager("llm_data.db")
-        self.checked = False
-        self.llm_host = llm_host
-
+class BaseLLMManager:
     def check(self) -> None:
         if self.checked:
             return
@@ -1422,6 +1417,19 @@ SYSTEM """{proc.system}"""
         return result
 
 
+class RemoteLLMRunner(BaseLLMManager):
+    def __init__(self, llm_host) -> None:
+        self.sql_manager = SQLManager("llm_data.db")
+        self.checked = False
+        self.llm_host = llm_host
+
+
+class LocalLLMRunner(BaseLLMManager):
+    def __init__(self) -> None:
+        self.sql_manager = SQLManager("llm_data.db")
+        self.checked = False
+
+
 class ValueGetter(dict):
     def __call__(self, key) -> str:
         return self[key]
@@ -1435,19 +1443,39 @@ if __name__ == "__main__":
     argparser.add_argument("--check", action="store_true", default=False)
     argparser.add_argument("--add-undefined", action="store_true", default=False)
     argparser.add_argument("--verbose", action="store_true", default=False)
-    argparser.add_argument("--llm-host", default="localhost")
+    argparser.add_argument("--llm-host", default=None)
     args = argparser.parse_args()
+
+    if args.llm_host is None:
+        llm_runner = LocalLLMRunner()
+    else:
+        llm_runner = RemoteLLMRunner(llm_host=args.llm_host)
 
     with open(args.program, "r") as f:
         program_code = f.read()
-        system = System(parse_program(program_code), LLMManager(llm_host=args.llm_host), SQLManager(), args.verbose)
+        system = System(parse_program(program_code), llm_runner, SQLManager(), args.verbose)
 
     if args.check or args.add_undefined:
         undefined = system.get_undefined_procedures()
         if len(undefined) > 0:
             if args.add_undefined:
                 new_procedures = [
-                    f"# {name}\n\nModel: llama3.2\n\n## System\n\n...\n\n## Prompt\n\n{{prompt}}\n\n## History\n\nU: ...\nA: ...\n"
+                    f"""# {name}
+Model: llama3.2
+
+## System
+
+...
+
+## Prompt
+
+{{prompt}}
+
+## History
+
+U: ...
+A: ...
+"""
                     for name in undefined
                 ]
                 with open(args.program, "a") as f:
