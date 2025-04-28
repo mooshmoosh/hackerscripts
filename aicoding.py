@@ -2,7 +2,6 @@
 Todo:
 
 * make sure the break statement works
-* Implement default branch for case statements
 * implement a print / output command / statement
 * optimize programs so that if some code only depends on static data it is executed at compile once, and the result is stored in a variable.
 * add functions for creating new procedures, replace procedure calls, iterating over existing functions and modifying them
@@ -561,6 +560,8 @@ class Branch(Statement):
             exit_jump = Jump(0)
             jumps_to_update[len(result)] = exit_jump
             result.append(exit_jump)
+        if self.default is not None:
+            result += self.default.compile(system)
         for idx, exit_jump in jumps_to_update.items():
             exit_jump.jump = len(result) - idx - 1
         return result
@@ -986,6 +987,12 @@ CaseBranch = StructPattern(
     {"value": 2, "block": 5},
 )
 CaseBranches = ListPattern(CaseBranch, PrefixPattern(ExactString("\n"), CaseBranch))
+MaybeDefaultBranch = TaggedUnionPattern(
+    {
+        "default": StructPattern([SpacesOrNewLines, CodeBlock], {"block": 1}),
+        "none": ExactString(""),
+    }
+)
 BranchPattern = StructPattern(
     [
         MaybeSpaces,
@@ -996,8 +1003,9 @@ BranchPattern = StructPattern(
         CaseBranches,
         SpacesOrNewLines,
         ExactString("}"),
+        MaybeDefaultBranch,
     ],
-    {"branches": 5},
+    {"branches": 5, "default": 8},
 )
 SingleQuestionLine = StructPattern(
     [
@@ -1204,13 +1212,17 @@ def make_statements(statements: list[dict]) -> list[Statement]:
                     )
                 )
             case "branch":
+                if statement["default"]["type"] == "none":
+                    default_branch = None
+                else:
+                    default_branch = Procedure(make_statements(statement["default"]["value"]["block"]["statements"]))
                 result.append(
                     Branch(
                         branches={
                             branch["value"]: Procedure(make_statements(branch["block"]["statements"]))
                             for branch in statement["branches"]
                         },
-                        default=None,
+                        default=default_branch,
                     )
                 )
             case "format_string":
@@ -1280,6 +1292,9 @@ class SQLManager:
 
 
 class BaseLLMManager:
+    sql_manager: "SQLManager"
+    checked: bool
+
     def check(self) -> None:
         if self.checked:
             return
@@ -1456,7 +1471,7 @@ class LocalLLMRunner(BaseLLMManager):
         self.checked = False
 
     def _upload_model_file(self, model_file_id: str, model_file: str) -> None:
-        result = sp.run(["ollama", "show", "model_file_id"], capture_output=True)
+        result = sp.run(["ollama", "show", model_file_id], capture_output=True)
         if result.returncode == 0:
             return
         with open(f"/tmp/{model_file_id}.txt", "w") as f:
@@ -1494,6 +1509,7 @@ if __name__ == "__main__":
     argparser.add_argument("--llm-host", default=None)
     args = argparser.parse_args()
 
+    llm_runner: BaseLLMManager
     if args.llm_host is None:
         llm_runner = LocalLLMRunner()
     else:
