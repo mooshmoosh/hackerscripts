@@ -2,6 +2,8 @@
 Todo:
 
 * make sure the break statement works
+* Implement default branch for case statements
+* implement a print / output command / statement
 * optimize programs so that if some code only depends on static data it is executed at compile once, and the result is stored in a variable.
 * add functions for creating new procedures, replace procedure calls, iterating over existing functions and modifying them
 * Take variables from the cli?
@@ -127,7 +129,14 @@ class System:
 
     def ask_questions(self, questions: list[tuple[str, str]]) -> None:
         for name, question in questions:
-            self.set_var(name, input(f"{question}: "))
+            default = self.get_var(name).strip()
+            if default == "":
+                result = input(f"{question}: ").strip()
+            else:
+                result = input(f"{question} ({default}): ").strip()
+            if result == "":
+                result = default
+            self.set_var(name, result)
 
     def compile_all(self) -> None:
         if len(self.procedures) == 0:
@@ -677,7 +686,6 @@ class AnyCharBut(RegexPattern):
 
 @dataclass
 class OnlyChars(RegexPattern):
-
     include: list[str]
     empty_ok: bool
 
@@ -1215,7 +1223,7 @@ def make_statements(statements: list[dict]) -> list[Statement]:
 class SQLManager:
     def __init__(self, filename="data.db") -> None:
         self.filename = filename
-        self.connection = sqlite3.connect(self.filename, autocommit=False)
+        self.connection = sqlite3.connect(self.filename)
 
     def execute_sql_script(self, query: str) -> None:
         cur = self.connection.cursor()
@@ -1300,10 +1308,11 @@ class BaseLLMManager:
         create unique index if not exists llm_model_names_idx on llm_model_names(model_id, name);
         """
         )
-        result = sp.run(["ssh", self.llm_host, f"echo 'hi'"], capture_output=True)
-        if result.returncode != 0:
-            raise RuntimeError(f"couldn't connect to llm server:\n{result.stderr.decode()}")
+        self.check_llm_host()
         self.checked = True
+
+    def check_llm_host(self) -> None:
+        pass
 
     def _get_model_id(self, proc: LLMProcedure) -> tuple[str, str]:
         messages_flat = ":".join([x[0] + ":" + x[1] for x in proc.history])
@@ -1355,19 +1364,11 @@ SYSTEM """{proc.system}"""
             )
         return model_id, model_file_id
 
+    def check_model_existance(self, model_file_id: str) -> bool:
+        raise NotImplementedError()
+
     def _upload_model_file(self, model_file_id: str, model_file: str) -> None:
-        self.check()
-        result = sp.run(["ssh", self.llm_host, f"ollama show {model_file_id}"], capture_output=True)
-        if result.returncode == 0:
-            return
-        result = sp.run(
-            ["ssh", self.llm_host, f"cat > /tmp/{model_file_id}.txt"], input=model_file.encode(), capture_output=True
-        )
-        result = sp.run(
-            ["ssh", self.llm_host, f"ollama create {model_file_id} -f /tmp/{model_file_id}.txt"],
-            input=model_file.encode(),
-            capture_output=True,
-        )
+        raise NotImplementedError()
 
     def _get_input_data_hash(self, data: dict[str, str]) -> str:
         pattern = re.compile(r"[^a-zA-Z]+")
@@ -1399,14 +1400,7 @@ SYSTEM """{proc.system}"""
             break
         if result is not None and result != "":
             return result
-        process_result = sp.run(
-            ["ssh", self.llm_host, f"ollama run {model_file_id} --nowordwrap"],
-            input=procedure.prompt.format(**data).encode(),
-            capture_output=True,
-        )
-        result = process_result.stdout.decode().strip()
-        if result == "":
-            breakpoint()
+        result = self.run_model(model_file_id, procedure.prompt.format(**data))
         list(
             self.sql_manager.execute_sql(
                 "insert into responses(model_id, prompt_hash, data, response) values (:model_id, :prompt_hash, :data, :response)",
@@ -1416,6 +1410,9 @@ SYSTEM """{proc.system}"""
         )
         return result
 
+    def run_model(self, model_file_id: str, prompt: str) -> str:
+        raise NotImplementedError()
+
 
 class RemoteLLMRunner(BaseLLMManager):
     def __init__(self, llm_host) -> None:
@@ -1423,11 +1420,62 @@ class RemoteLLMRunner(BaseLLMManager):
         self.checked = False
         self.llm_host = llm_host
 
+    def check_llm_host(self) -> None:
+        result = sp.run(["ssh", self.llm_host, f"echo 'hi'"], capture_output=True)
+        if result.returncode != 0:
+            raise RuntimeError(f"couldn't connect to llm server:\n{result.stderr.decode()}")
+        return None
+
+    def _upload_model_file(self, model_file_id: str, model_file: str) -> None:
+        result = sp.run(["ssh", self.llm_host, f"ollama show {model_file_id}"], capture_output=True)
+        if result.returncode == 0:
+            return
+        result = sp.run(
+            ["ssh", self.llm_host, f"cat > /tmp/{model_file_id}.txt"], input=model_file.encode(), capture_output=True
+        )
+        result = sp.run(
+            ["ssh", self.llm_host, f"ollama create {model_file_id} -f /tmp/{model_file_id}.txt"],
+            capture_output=True,
+        )
+
+    def run_model(self, model_file_id: str, prompt: str) -> str:
+        process_result = sp.run(
+            ["ssh", self.llm_host, f"ollama run {model_file_id} --nowordwrap"],
+            input=prompt.encode(),
+            capture_output=True,
+        )
+        result = process_result.stdout.decode().strip()
+        if result == "":
+            breakpoint()
+        return result
+
 
 class LocalLLMRunner(BaseLLMManager):
     def __init__(self) -> None:
         self.sql_manager = SQLManager("llm_data.db")
         self.checked = False
+
+    def _upload_model_file(self, model_file_id: str, model_file: str) -> None:
+        result = sp.run(["ollama", "show", "model_file_id"], capture_output=True)
+        if result.returncode == 0:
+            return
+        with open(f"/tmp/{model_file_id}.txt", "w") as f:
+            f.write(model_file)
+        result = sp.run(
+            ["ollama", "create", model_file_id, "-f", f"/tmp/{model_file_id}.txt"],
+            capture_output=True,
+        )
+
+    def run_model(self, model_file_id: str, prompt: str) -> str:
+        process_result = sp.run(
+            ["ollama", "run", model_file_id, "--nowordwrap"],
+            input=prompt.encode(),
+            capture_output=True,
+        )
+        result = process_result.stdout.decode().strip()
+        if result == "":
+            breakpoint()
+        return result
 
 
 class ValueGetter(dict):
@@ -1461,6 +1509,7 @@ if __name__ == "__main__":
             if args.add_undefined:
                 new_procedures = [
                     f"""# {name}
+
 Model: llama3.2
 
 ## System

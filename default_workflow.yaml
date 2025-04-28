@@ -1598,6 +1598,24 @@ schema_change_on_load: |
       values ('CO', 'Computer / online shopping')
       on conflict do nothing;
 
+    CREATE VIRTUAL TABLE if not exists task_description_fts USING fts5(desc, content='tasks', content_rowid='id');
+    drop trigger if exists tasks_fts_ai;
+    CREATE TRIGGER tasks_fts_ai AFTER INSERT on tasks
+    BEGIN
+      insert into task_description_fts(rowid, desc) values(new.id, new.desc);
+    END;
+    drop trigger if exists tasks_fts_au;
+    CREATE TRIGGER tasks_fts_au AFTER UPDATE on tasks
+    BEGIN
+      insert into task_description_fts(task_description_fts, rowid, desc) values ('delete', old.id, old.desc);
+      insert into task_description_fts(rowid, desc) values(new.id, new.desc);
+    END;
+    drop trigger if exists tasks_fts_ad;
+    CREATE TRIGGER tasks_fts_ad AFTER DELETE on tasks
+    BEGIN
+      insert into task_description_fts(task_description_fts, rowid, desc) values ('delete', old.id, old.desc);
+    END;
+
 schema:
   display: |
     CREATE TABLE tasks(
