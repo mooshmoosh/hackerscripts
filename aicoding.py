@@ -1,8 +1,6 @@
 """
 Todo:
 
-* make sure the break statement works
-* an infinite loop (since we have break now)
 * when / ifso - just a "yes" branch of if
 * unless / ifnot - just the else branch, doing nothing if "yes"
 * Scrap the Query property of sql statements and just always pass the query as prompt
@@ -39,7 +37,7 @@ def log(msg: str) -> None:
 
 # Computation model
 
-CompiledIterator = deque[str | dict[str, str]]
+CompiledIterator = Union[deque[str | dict[str, str]], "InfiniteIterator"]
 
 
 class System:
@@ -93,7 +91,7 @@ class System:
     def set_var(self, name: str, value: str) -> None:
         if self.verbose:
             log(f"Saving to variable: {name}, value: {value}")
-        self.stack[-1][name] = value
+        self.stack[-1][name] = str(value)
 
     def new_env(self) -> None:
         self.stack.append({})
@@ -179,6 +177,11 @@ class System:
         self.iterators.append(result)
         return result
 
+    def new_infinite_iterator(self) -> CompiledIterator:
+        result = InfiniteIterator()
+        self.iterators.append(result)
+        return result
+
     def pop_iterator(self) -> None:
         self.iterators.pop()
 
@@ -209,6 +212,14 @@ class System:
     def output_text(self, text: str) -> None:
         print(text)
         return None
+
+
+class InfiniteIterator:
+    def __len__(self):
+        return 1
+
+    def popleft(self) -> str:
+        return ""
 
 
 # ByteCodeCommands are the most primitive part of execution. Compiling programs to VM bytecode
@@ -296,6 +307,11 @@ class AddParagraphIterator(BaseByteCode):
             if line == "":
                 continue
             iterator.append(line)
+
+
+class AddInfiniteIterator(BaseByteCode):
+    def execute(self, system: System) -> None:
+        system.new_infinite_iterator()
 
 
 class EndLoopMarker(BaseByteCode):
@@ -429,6 +445,25 @@ class LoopStatement(Statement):
             result.append(EndLoopMarker())
             return result
 
+    def get_undefined_procedures(self, system: System) -> set[str]:
+        if self.procedure is None:
+            return set()
+        else:
+            return self.procedure.get_undefined_procedures(system)
+
+
+class InfiniteLoop(LoopStatement):
+    def execute(self, system: System) -> None:
+        while True:
+            if self.procedure is not None:
+                try:
+                    self.procedure.execute(system)
+                except BreakStatementEncountered:
+                    break
+
+    def get_iterator_command(self) -> BaseByteCode:
+        return AddInfiniteIterator()
+
 
 @dataclass
 class SQLStatement(LoopStatement):
@@ -452,23 +487,11 @@ class SQLStatement(LoopStatement):
                 for key, value in row.items():
                     system.set_var(key, value)
 
-    def get_undefined_procedures(self, system: System) -> set[str]:
-        if self.procedure is None:
-            return set()
-        else:
-            return self.procedure.get_undefined_procedures(system)
-
     def get_iterator_command(self) -> BaseByteCode:
         return AddSQLIterator(self.query, self.read_only)
 
 
 class ForEach(LoopStatement):
-    def get_undefined_procedures(self, system: System) -> set[str]:
-        if self.procedure is None:
-            return set()
-        else:
-            return self.procedure.get_undefined_procedures(system)
-
     def get_lines(self) -> Iterator[str]:
         return iter(system.get_var("prompt").split("\n"))
 
@@ -1003,6 +1026,15 @@ SQLMutQuery = StructPattern(
     ],
     {"query": 2, "block": 4},
 )
+InfiniteLoopPattern = StructPattern(
+    [
+        MaybeSpaces,
+        ExactString("loop"),
+        SpacesOrNewLines,
+        CodeBlock,
+    ],
+    {"block": 3},
+)
 CaseBranch = StructPattern(
     [
         MaybeSpaces,
@@ -1069,6 +1101,7 @@ CodeStatement = TaggedUnionPattern(
         "for_each_paragraph": ForEachParagraphLoop,
         "for_each": ForEachLoop,
         "ask": AskPattern,
+        "loop": InfiniteLoopPattern,
         "branch": BranchPattern,
         "sql_read_only_query": SQLReadOnlyQuery,
         "sql_mut_query": SQLMutQuery,
@@ -1241,6 +1274,8 @@ def make_statements(statements: list[dict]) -> list[Statement]:
                         None,
                     )
                 )
+            case "loop":
+                result.append(InfiniteLoop(Procedure(make_statements(statement["block"]["statements"]))))
             case "print":
                 result.append(OutputText())
             case "break":
