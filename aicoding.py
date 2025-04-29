@@ -3,7 +3,6 @@ Todo:
 
 * when / ifso - just a "yes" branch of if
 * unless / ifnot - just the else branch, doing nothing if "yes"
-* Scrap the Query property of sql statements and just always pass the query as prompt
 * add functions for creating new procedures, replace procedure calls, iterating over existing functions and modifying them
 * Call a procedure named in a variable
 * Run a block of text with bash
@@ -276,15 +275,11 @@ class SetIteratorItemVariables(BaseByteCode):
 
 @dataclass
 class AddSQLIterator(BaseByteCode):
-    query: str | None
     read_only: bool
 
     def execute(self, system: System) -> None:
         iterator = system.new_iterator()
-        if self.query is None:
-            query = system.get_var("prompt")
-        else:
-            query = self.query
+        query = system.get_var("prompt")
         for row in system.execute_sql(query, read_only=self.read_only):
             iterator.append(row)
 
@@ -468,13 +463,9 @@ class InfiniteLoop(LoopStatement):
 @dataclass
 class SQLStatement(LoopStatement):
     read_only: bool
-    query: str | None
 
     def execute(self, system: System) -> None:
-        if self.query is None:
-            query = system.get_var("prompt")
-        else:
-            query = self.query
+        query = system.get_var("prompt")
         for row in system.execute_sql(query, read_only=self.read_only):
             if self.procedure is not None:
                 for key, value in row.items():
@@ -488,7 +479,7 @@ class SQLStatement(LoopStatement):
                     system.set_var(key, value)
 
     def get_iterator_command(self) -> BaseByteCode:
-        return AddSQLIterator(self.query, self.read_only)
+        return AddSQLIterator(self.read_only)
 
 
 class ForEach(LoopStatement):
@@ -992,40 +983,20 @@ ForEachParagraphLoop = StructPattern(
 SQLReadOnly = StructPattern(
     [
         MaybeSpaces,
-        ExactString("SQL"),
+        ExactString("/sql"),
         UnionPattern([PrefixPattern(SpacesOrNewLines, CodeBlock), ExactString("")]),
     ],
-    {"block": 3},
+    {"block": 2},
 )
 SQLMut = StructPattern(
     [
         MaybeSpaces,
-        ExactString("SQL!"),
+        ExactString("/sql!"),
         UnionPattern([PrefixPattern(SpacesOrNewLines, CodeBlock), ExactString("")]),
     ],
-    {"block": 3},
+    {"block": 2},
 )
 
-SQLReadOnlyQuery = StructPattern(
-    [
-        MaybeSpaces,
-        ExactString('SQL"'),
-        StringContent,
-        ExactString('"'),
-        UnionPattern([PrefixPattern(SpacesOrNewLines, CodeBlock), ExactString("")]),
-    ],
-    {"query": 2, "block": 4},
-)
-SQLMutQuery = StructPattern(
-    [
-        MaybeSpaces,
-        ExactString('SQL!"'),
-        StringContent,
-        ExactString('"'),
-        UnionPattern([PrefixPattern(SpacesOrNewLines, CodeBlock), ExactString("")]),
-    ],
-    {"query": 2, "block": 4},
-)
 InfiniteLoopPattern = StructPattern(
     [
         MaybeSpaces,
@@ -1103,10 +1074,8 @@ CodeStatement = TaggedUnionPattern(
         "ask": AskPattern,
         "loop": InfiniteLoopPattern,
         "branch": BranchPattern,
-        "sql_read_only_query": SQLReadOnlyQuery,
-        "sql_mut_query": SQLMutQuery,
-        "sql_read_only_no_query": SQLReadOnly,
-        "sql_mut_no_query": SQLMut,
+        "sql_mut": SQLMut,
+        "sql_read_only": SQLReadOnly,
         "break": PrefixPattern(MaybeSpaces, ExactString("/break")),
         "print": PrefixPattern(MaybeSpaces, ExactString("/print")),
         "format_string": FormatStringPattern,
@@ -1242,36 +1211,18 @@ def make_statements(statements: list[dict]) -> list[Statement]:
                 result.append(ForEach(Procedure(make_statements(statement["block"]["statements"]))))
             case "for_each_paragraph":
                 result.append(ForEachParagraph(Procedure(make_statements(statement["block"]["statements"]))))
-            case "sql_read_only_query":
+            case "sql_read_only":
                 result.append(
                     SQLStatement(
                         (Procedure(make_statements(statement["block"]["statements"])) if statement["block"] else None),
                         True,
-                        statement["query"],
                     )
                 )
-            case "sql_mut_query":
+            case "sql_mut":
                 result.append(
                     SQLStatement(
                         (Procedure(make_statements(statement["block"]["statements"])) if statement["block"] else None),
                         False,
-                        statement["query"],
-                    )
-                )
-            case "sql_read_only_no_query":
-                result.append(
-                    SQLStatement(
-                        (Procedure(make_statements(statement["block"]["statements"])) if statement["block"] else None),
-                        True,
-                        None,
-                    )
-                )
-            case "sql_mut_no_query":
-                result.append(
-                    SQLStatement(
-                        (Procedure(make_statements(statement["block"]["statements"])) if statement["block"] else None),
-                        False,
-                        None,
                     )
                 )
             case "loop":
