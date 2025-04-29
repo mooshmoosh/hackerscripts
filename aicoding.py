@@ -2,11 +2,16 @@
 Todo:
 
 * make sure the break statement works
-* implement a print / output command / statement
-* optimize programs so that if some code only depends on static data it is executed at compile once, and the result is stored in a variable.
+* an infinite loop (since we have break now)
+* when / ifso - just a "yes" branch of if
+* unless / ifnot - just the else branch, doing nothing if "yes"
+* Scrap the Query property of sql statements and just always pass the query as prompt
 * add functions for creating new procedures, replace procedure calls, iterating over existing functions and modifying them
-* Take variables from the cli?
-* json decode?
+* Call a procedure named in a variable
+* Run a block of text with bash
+* Run a block of text with python
+* Take variables from the cli
+* json decode
 * Add a cli option to not have any stdin, and run the program with prompt initially set to ""
 * create a new version of system that can pause and resume execution
 """
@@ -27,12 +32,12 @@ from dataclasses import dataclass
 from typing import Iterator, Union, Callable, Type
 import subprocess as sp
 
-# Computation model
-
 
 def log(msg: str) -> None:
     print(datetime.datetime.now().isoformat(), msg, file=sys.stderr)
 
+
+# Computation model
 
 CompiledIterator = deque[str | dict[str, str]]
 
@@ -200,6 +205,10 @@ class System:
         while len(self.call_stack) > 0:
             self.step()
         print(self.get_var("prompt"))
+
+    def output_text(self, text: str) -> None:
+        print(text)
+        return None
 
 
 # ByteCodeCommands are the most primitive part of execution. Compiling programs to VM bytecode
@@ -590,9 +599,19 @@ class BreakStatement(Statement):
         return [BreakCommand()]
 
 
+class OutputText(Statement, BaseByteCode):
+    def execute(self, system: System) -> None:
+        system.output_text(system.get_var("prompt"))
+        return None
+
+    def compile(self, system: System) -> list[BaseByteCode]:
+        return [self]
+
+
 # Parsing Classes
 
 AtomicType = str | int | float | None
+AtomicTypes = (str, int, float)
 CompoundType = AtomicType | list["CompoundType"] | dict[str, "CompoundType"]
 
 
@@ -609,12 +628,21 @@ class ParseResult:
             return ""
 
     def as_data(self) -> CompoundType:
-        if isinstance(self.value, AtomicType):
+        if isinstance(self.value, int):
+            return self.value
+        elif isinstance(self.value, float):
+            return self.value
+        elif isinstance(self.value, str):
+            return self.value
+        elif self.value is None:
             return self.value
         elif isinstance(self.value, list):
             return [value.as_data() for value in self.value]
         elif isinstance(self.value, dict):
             return {key: value.as_data() for key, value in self.value.items()}
+        else:
+            breakpoint()
+            raise ValueError("Can't convert {self.value} to data")
 
 
 class Pattern:
@@ -1001,11 +1029,11 @@ BranchPattern = StructPattern(
         ExactString("{"),
         SpacesOrNewLines,
         CaseBranches,
+        MaybeDefaultBranch,
         SpacesOrNewLines,
         ExactString("}"),
-        MaybeDefaultBranch,
     ],
-    {"branches": 5, "default": 8},
+    {"branches": 5, "default": 6},
 )
 SingleQuestionLine = StructPattern(
     [
@@ -1041,11 +1069,13 @@ CodeStatement = TaggedUnionPattern(
         "for_each_paragraph": ForEachParagraphLoop,
         "for_each": ForEachLoop,
         "ask": AskPattern,
+        "branch": BranchPattern,
         "sql_read_only_query": SQLReadOnlyQuery,
         "sql_mut_query": SQLMutQuery,
         "sql_read_only_no_query": SQLReadOnly,
         "sql_mut_no_query": SQLMut,
-        "branch": BranchPattern,
+        "break": PrefixPattern(MaybeSpaces, ExactString("/break")),
+        "print": PrefixPattern(MaybeSpaces, ExactString("/print")),
         "format_string": FormatStringPattern,
         "call": ProcedureCallPattern,
         "blank_line": ExactString(""),
@@ -1211,6 +1241,10 @@ def make_statements(statements: list[dict]) -> list[Statement]:
                         None,
                     )
                 )
+            case "print":
+                result.append(OutputText())
+            case "break":
+                result.append(BreakStatement())
             case "branch":
                 if statement["default"]["type"] == "none":
                     default_branch = None
@@ -1501,6 +1535,7 @@ class ValueGetter(dict):
 if __name__ == "__main__":
     argparser = argparse.ArgumentParser()
     argparser.add_argument("--program", default="workflow.md")
+    argparser.add_argument("--list", action="store_true", default=False)
     argparser.add_argument("--procedure", default=None)
     argparser.add_argument("--input-file", default=None)
     argparser.add_argument("--check", action="store_true", default=False)
@@ -1509,15 +1544,21 @@ if __name__ == "__main__":
     argparser.add_argument("--llm-host", default=None)
     args = argparser.parse_args()
 
+    with open(args.program, "r") as f:
+        parsed_program = parse_program(f.read())
+
+    if args.list:
+        for name in parsed_program.keys():
+            print(name)
+        exit(0)
+
     llm_runner: BaseLLMManager
     if args.llm_host is None:
         llm_runner = LocalLLMRunner()
     else:
         llm_runner = RemoteLLMRunner(llm_host=args.llm_host)
 
-    with open(args.program, "r") as f:
-        program_code = f.read()
-        system = System(parse_program(program_code), llm_runner, SQLManager(), args.verbose)
+    system = System(parsed_program, llm_runner, SQLManager(), args.verbose)
 
     if args.check or args.add_undefined:
         undefined = system.get_undefined_procedures()
