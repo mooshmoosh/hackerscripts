@@ -1,18 +1,3 @@
-"""
-Todo:
-
-* when / ifso - just a "yes" branch of if
-* unless / ifnot - just the else branch, doing nothing if "yes"
-* add functions for creating new procedures, replace procedure calls, iterating over existing functions and modifying them
-* Call a procedure named in a variable
-* Run a block of text with bash
-* Run a block of text with python
-* Take variables from the cli
-* json decode
-* Add a cli option to not have any stdin, and run the program with prompt initially set to ""
-* create a new version of system that can pause and resume execution
-"""
-
 import json
 from functools import cached_property
 from collections import deque

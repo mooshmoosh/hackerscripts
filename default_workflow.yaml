@@ -452,6 +452,7 @@ review_all_tasks:
       {last_review_time} ({recentp})
 
     /bt breakdown this task
+    /ct change task type
     /dt this is done
     /mt modify
     /st start this task
@@ -475,6 +476,10 @@ review_all_tasks:
       order by last_review_time asc nulls first, created_at asc
       limit 1
   commands:
+    - command: "/ct"
+      queries:
+        - workflow: "modify_task"
+          command: "/ct"
     - command: "/vp"
       to: modify_project
       queries:
@@ -784,7 +789,7 @@ tasks_of_type:
   display: |
     # {task_type_name} Tasks
 
-    (/dt mark as done, /st start task, /b go back)
+    (/dt mark as done, /st start task, /b go back, /mt to modify task)
   tables:
     - |
       select
@@ -795,6 +800,19 @@ tasks_of_type:
   queries:
     - "select name as task_type_name from task_types where id = :task_type_id;"
   commands:
+    - command: "/mt"
+      to: "modify_task"
+      queries:
+        - "select 'tasks_of_type' as back_to_page;"
+        - choices: |
+            select
+              id as current_task_id,
+              project_name,
+              desc as task_description
+            from available_tasks
+            where task_type_id = :task_type_id
+          format: "{task_description} - {project_name}"
+          display: "which task?"
     - command: "/st"
       to: "__next"
       queries:
@@ -1002,6 +1020,22 @@ modify_task:
     /b back
 
   commands:
+    - command: "/qa"
+      to: __next
+      queries:
+        - choices: |
+            select
+              id as question_id,
+              desc as question_text
+            from
+            available_tasks
+            where short_task_type = 'Q';
+          format: "{question_text}"
+          display: "Which question?"
+        - "insert into notes(id, note) values (:question_id, '') on conflict do nothing;"
+        - "update notes set note = (note || :__NL || :task_description) where id = :question_id;"
+        - "update tasks set completed_at = current_timestamp where id = :current_task_id;"
+        - "select coalesce(:back_to_page, 'current_tasks') as __next;"
     - command: "/mga"
       queries:
         - choices: |
@@ -1596,6 +1630,22 @@ schema_change_on_load: |
 
     insert into task_types(short_name, name)
       values ('CO', 'Computer / online shopping')
+      on conflict do nothing;
+
+    insert into task_types(short_name, name)
+      values ('PR', 'Programming Anywhere')
+      on conflict do nothing;
+
+    insert into task_types(short_name, name)
+      values ('PH', 'Programming at Home')
+      on conflict do nothing;
+
+    insert into task_types(short_name, name)
+      values ('WC', 'Work Computer')
+      on conflict do nothing;
+
+    insert into task_types(short_name, name)
+      values ('EM', 'Write Email / Message')
       on conflict do nothing;
 
     CREATE VIRTUAL TABLE if not exists task_description_fts USING fts5(desc, content='tasks', content_rowid='id');
