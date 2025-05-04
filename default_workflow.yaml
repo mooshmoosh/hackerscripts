@@ -1015,11 +1015,16 @@ modify_task:
     /pd   this is a piece of data for a project
     /qa   this is part of an answer to a question
     /pn   this is a general project note
+    /bt   break down this task into other tasks
     /ma   this is a note that should go on the agenda for a meeting
     /mga  this is a note that should on the agenda for all meetings in a group
     /b back
 
   commands:
+    - command: "/bt"
+      to: break_down_task
+      queries:
+        - "select 'modify_task' as back_to_page;"
     - command: "/qa"
       to: __next
       queries:
