@@ -128,20 +128,24 @@ class StateMachine:
                 breakpoint()
             if "filename" in query:
                 self.write_file_command(**query)
+            elif "filter_prefix" in query:
+                self.perform_filter(**query)
+            elif "select_from" in query:
+                self.multi_choice_command(**query)
+            elif "template" in query and "variable" in query:
+                self.format_variable(**query)
+            elif "variable" in query and "query" in query:
+                self.query_from_variable(**query)
             elif "bash" in query:
                 self.bash_command(**query)
             elif "choices" in query:
                 self.choice_command(**query)
-            elif "select_from" in query:
-                self.multi_choice_command(**query)
             elif "prompt" in query:
                 self.get_prompt(**query)
             elif "edit" in query:
                 self.edit_variable(**query)
             elif "workflow" in query:
                 self.execute_other_command(**query)
-            elif "filter_prefix" in query:
-                self.perform_filter(**query)
 
     def perform_filter(self, filter_prefix, variable, sep=None, query=None):
         """
@@ -364,6 +368,41 @@ class StateMachine:
                 cur = self.conn.cursor()
                 self.exec_query_with_missing_key_handling(cur, query, self.data)
                 self.conn.commit()
+
+    def format_variable(self, template, variable, query=None):
+        """
+        Format a template and save the result in a variable
+        """
+        if query is None:
+            while True:
+                try:
+                    formatted = template.format(**self.data)
+                    break
+                except KeyError as e:
+                    self.data[e.args[0]] = ""
+            self.data[variable] = formatted
+        else:
+            result = []
+            for row in self.exec_many(query):
+                self.update_with_data(row)
+                result.append(template.format(**row))
+            self.data[variable] = "".join(result)
+
+    def query_from_variable(self, variable: str, query: str, sep="|"):
+        """
+        take the text from a variable, split it into lines and run a query for each
+        """
+        cur = self.conn.cursor()
+        lines = self.data.get(variable, "").splitlines()
+        table = [{f"__{idx + 1}": col for idx, col in enumerate(line.split(sep))} for line in lines]
+        max_col_count = max(len(row) for row in table)
+        for line, row in zip(lines, table):
+            row["__line"] = line
+            for idx in range(max_col_count):
+                row.setdefault(f"__{idx+1}", None)
+            row.update(self.data)
+            self.exec_query_with_missing_key_handling(cur, query, row)
+        self.conn.commit()
 
     def write_file_command(self, filename, template, query=None, append=False):
         """

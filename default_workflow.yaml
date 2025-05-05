@@ -348,6 +348,19 @@ current_tasks:
               ),
               (select project from tasks where id = :current_task_id)
             );
+        - filter_prefix: "q: "
+          variable: "notes_content"
+          query: |
+            insert into tasks(desc, task_type, project)
+            values (
+              :__1,
+              (
+                select id
+                from task_types
+                where short_name = 'Q'
+              ),
+              (select project from tasks where id = :current_task_id)
+            );
         - "insert into notes(id, note) values(:meeting_id, :notes_content);"
     - command: "/sq"
       queries:
@@ -621,7 +634,7 @@ modify_project_template:
         - "update project_templates set name = :__input where id = :project_template_id;"
     - command: "/edit"
       queries:
-        - filename: ".temp_note.md"
+        - variable: "project_template_task_file"
           template: "{line}"
           query: |
             select '# Tasks for template: ' || :project_template_name || :__NL || :__NL as line
@@ -633,10 +646,9 @@ modify_project_template:
             left join project_template_fields as tf
               on tt.format_field = tf.id
             where tt.template = :project_template_id
-        - bash: "nvim .temp_note.md"
-          system: true
+        - edit: "project_template_task_file"
         - "create temporary table updated_template_tasks(desc text, field_name text, short_task_type text, id integer);"
-        - bash: "cat .temp_note.md"
+        - variable: "project_template_task_file"
           query: |
             with new_id as (
               select cast(coalesce(:__4, 0) as integer) as id
@@ -675,7 +687,7 @@ modify_project_template:
         - "drop table temp.updated_template_tasks;"
     - command: "/deps"
       queries:
-        - filename: ".temp_note.md"
+        - variable: "project_template_task_file"
           template: "{line}"
           query: |
             select '# Dependancies for ' || :project_template_name || :__NL || :__NL as line
@@ -696,10 +708,9 @@ modify_project_template:
               on tl.blocked = tt2.id
             where tt1.template = :project_template_id
             and tt2.template = :project_template_id
-        - bash: "nvim .temp_note.md"
-          system: true
+        - edit: "project_template_task_file"
         - "create temporary table updated_task_links(blocker text, blocked text);"
-        - bash: "cat .temp_note.md"
+        - variable: "project_template_task_file"
           query: "insert into temp.updated_task_links(blocker, blocked) values ((select trim(:__1)), (select trim(:__2))"
         - "delete from temp.updated_task_links where trim(blocker) like '#%' or trim(blocker) == '';"
         - |
@@ -903,7 +914,19 @@ have_meeting:
           ),
           (select project from tasks where id = :current_task_id)
         );
-
+    - filter_prefix: "q: "
+      variable: "notes_content"
+      query: |
+        insert into tasks(desc, task_type, project)
+        values (
+          :__1,
+          (
+            select id
+            from task_types
+            where short_name = 'Q'
+          ),
+          (select project from tasks where id = :current_task_id)
+        );
     - |
       update notes
       set note = :notes_content
@@ -955,6 +978,19 @@ answer_question:
             select id
             from task_types
             where short_name = 'T'
+          ),
+          (select project from tasks where id = :current_task_id)
+        );
+    - filter_prefix: "q: "
+      variable: "notes_content"
+      query: |
+        insert into tasks(desc, task_type, project)
+        values (
+          :__1,
+          (
+            select id
+            from task_types
+            where short_name = 'Q'
           ),
           (select project from tasks where id = :current_task_id)
         );
@@ -1278,7 +1314,19 @@ modify_project:
               ),
               :project_id
             );
-
+        - filter_prefix: "q: "
+          variable: "notes_content"
+          query: |
+            insert into tasks(desc, task_type, project)
+            values (
+              :__1,
+              (
+                select id
+                from task_types
+                where short_name = 'Q'
+              ),
+              (select project from tasks where id = :current_task_id)
+            );
         - "insert into notes(id, note) values (:project_id, :project_notes) on conflict do update set note = excluded.note;"
     - command: "/q"
       queries:
@@ -1377,6 +1425,19 @@ review_notes:
                 select id
                 from task_types
                 where short_name = 'T'
+              ),
+              (select project from tasks where id = :current_task_id)
+            );
+        - filter_prefix: "q: "
+          variable: "notes_content"
+          query: |
+            insert into tasks(desc, task_type, project)
+            values (
+              :__1,
+              (
+                select id
+                from task_types
+                where short_name = 'Q'
               ),
               (select project from tasks where id = :current_task_id)
             );
@@ -1651,6 +1712,10 @@ schema_change_on_load: |
 
     insert into task_types(short_name, name)
       values ('EM', 'Write Email / Message')
+      on conflict do nothing;
+
+    insert into task_types(short_name, name)
+      values ('PW', 'Programming at Work')
       on conflict do nothing;
 
     CREATE VIRTUAL TABLE if not exists task_description_fts USING fts5(desc, content='tasks', content_rowid='id');
