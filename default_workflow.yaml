@@ -468,7 +468,7 @@ review_all_tasks:
     /ct change task type
     /dt this is done
     /mt modify
-    /st start this task
+    /st start this task ({workflow})
     /vp go to the project page for this task
     /b go back
     /n move on to next task
@@ -1716,6 +1716,10 @@ schema_change_on_load: |
 
     insert into task_types(short_name, name)
       values ('PW', 'Programming at Work')
+      on conflict do nothing;
+
+    insert into task_types(short_name, name)
+      values ('RP', 'Refining Projects')
       on conflict do nothing;
 
     CREATE VIRTUAL TABLE if not exists task_description_fts USING fts5(desc, content='tasks', content_rowid='id');

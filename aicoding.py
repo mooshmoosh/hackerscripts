@@ -114,6 +114,8 @@ class System:
         return result
 
     def ask_questions(self, questions: list[tuple[str, str]]) -> None:
+        import readline
+
         for name, question in questions:
             default = self.get_var(name).strip()
             if default == "":
