@@ -1,3 +1,23 @@
+"""
+Todo:
+
+* default implementation of compile should be moved to base bytecode
+* remove LLMProcedures as a class
+* change the grammar so that you don't need a new line between statements, and names can't contain spaces
+* add temperature as a parameter to calling llms
+* Add an index to llms, meaning imagine the lLm is called a bunch of times, return the nth result. (this is for controled cache busting)
+* when / ifso - just a "yes" branch of if
+* unless / ifnot - just the else branch, doing nothing if "yes"
+* add functions for creating new procedures, replace procedure calls, iterating over existing functions and modifying them
+* Call a procedure named in a variable
+* Run a block of text with bash
+* Run a block of text with python
+* Take variables from the cli
+* json decode
+* Add a cli option to not have any stdin, and run the program with prompt initially set to ""
+* create a new version of system that can pause and resume execution
+"""
+
 import json
 from functools import cached_property
 from collections import deque
@@ -609,6 +629,31 @@ class OutputText(Statement, BaseByteCode):
         return [self]
 
 
+class CallLLM(Statement, BaseByteCode):
+    def parse_history(self, history: str):
+        lines = history.splitlines()
+        result: list[tuple[str, str]] = []
+        for line in lines:
+            if line.startswith("A: "):
+                result.append(("assistant", line[3:]))
+            elif line.startswith("U: "):
+                result.append(("user", line[3:]))
+        return result
+
+    def execute(self, system: System) -> None:
+        LLMProcedure(
+            model=system.get_var("model"),
+            system=system.get_var("system"),
+            prompt=system.get_var("prompt"),
+            name="(anon)",
+            history=self.parse_history(system.get_var("history")),
+        ).execute(system)
+        return None
+
+    def compile(self, system: System) -> list[BaseByteCode]:
+        return [self]
+
+
 # Parsing Classes
 
 AtomicType = str | int | float | None
@@ -1065,6 +1110,7 @@ CodeStatement = TaggedUnionPattern(
         "sql_read_only": SQLReadOnly,
         "break": PrefixPattern(MaybeSpaces, ExactString("/break")),
         "print": PrefixPattern(MaybeSpaces, ExactString("/print")),
+        "llm": PrefixPattern(MaybeSpaces, ExactString("/llm")),
         "format_string": FormatStringPattern,
         "call": ProcedureCallPattern,
         "blank_line": ExactString(""),
@@ -1214,6 +1260,8 @@ def make_statements(statements: list[dict]) -> list[Statement]:
                 )
             case "loop":
                 result.append(InfiniteLoop(Procedure(make_statements(statement["block"]["statements"]))))
+            case "llm":
+                result.append(CallLLM())
             case "print":
                 result.append(OutputText())
             case "break":
@@ -1355,7 +1403,8 @@ class BaseLLMManager:
 SYSTEM """{proc.system}"""
 {message_list}
 '''
-            self._upload_model_file(model_file_id, model_file)
+            if not self._upload_model_file(model_file_id, model_file):
+                raise RuntimeError("Can't upload model")
             list(
                 self.sql_manager.execute_sql(
                     """insert into llm_models(
@@ -1448,17 +1497,24 @@ class RemoteLLMRunner(BaseLLMManager):
             raise RuntimeError(f"couldn't connect to llm server:\n{result.stderr.decode()}")
         return None
 
-    def _upload_model_file(self, model_file_id: str, model_file: str) -> None:
+    def _upload_model_file(self, model_file_id: str, model_file: str) -> bool:
         result = sp.run(["ssh", self.llm_host, f"ollama show {model_file_id}"], capture_output=True)
         if result.returncode == 0:
-            return
+            return True
         result = sp.run(
             ["ssh", self.llm_host, f"cat > /tmp/{model_file_id}.txt"], input=model_file.encode(), capture_output=True
         )
+        if result.returncode != 0:
+            breakpoint()
+            return False
         result = sp.run(
             ["ssh", self.llm_host, f"ollama create {model_file_id} -f /tmp/{model_file_id}.txt"],
             capture_output=True,
         )
+        if result.returncode != 0:
+            breakpoint()
+            return False
+        return True
 
     def run_model(self, model_file_id: str, prompt: str) -> str:
         process_result = sp.run(
@@ -1540,20 +1596,15 @@ if __name__ == "__main__":
                 new_procedures = [
                     f"""# {name}
 
-Model: llama3.2
-
-## System
-
-...
-
-## Prompt
-
-{{prompt}}
-
-## History
-
-U: ...
-A: ...
+"llama3.2"
+-> model
+""
+-> system
+"U: ...
+A: ..."
+-> history
+"{{prompt}}"
+/llm
 """
                     for name in undefined
                 ]
