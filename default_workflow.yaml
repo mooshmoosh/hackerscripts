@@ -934,18 +934,17 @@ have_meeting:
   display: "Has the meeting now finished? (y/n)"
   commands:
     - command: "y"
-      to: current_tasks
+      to: __next
       queries:
+        - "select coalesce(:back_to_page, 'current_tasks') as __next;"
         - |
           update tasks
           set completed_at = current_timestamp
           where id = :current_task_id;
-        - |
-          update standing_meeting_instances
-          set completed_at = current_timestamp
-          where id = :note_id;
     - command: "n"
-      to: current_tasks
+      to: __next
+      queries:
+        - "select coalesce(:back_to_page, 'current_tasks') as __next;"
 
 
 answer_question:

@@ -629,6 +629,28 @@ class OutputText(Statement, BaseByteCode):
         return [self]
 
 
+class WriteFile(Statement, BaseByteCode):
+    def execute(self, system: System) -> None:
+        filename = system.get_var("filename")
+        with open(filename, "w") as f:
+            f.write(system.get_var("prompt"))
+        return None
+
+    def compile(self, system: System) -> list[BaseByteCode]:
+        return [self]
+
+
+class ReadFile(Statement, BaseByteCode):
+    def execute(self, system: System) -> None:
+        filename = system.get_var("filename")
+        with open(filename, "w") as f:
+            system.set_var("prompt", f.read())
+        return None
+
+    def compile(self, system: System) -> list[BaseByteCode]:
+        return [self]
+
+
 class CallLLM(Statement, BaseByteCode):
     def parse_history(self, history: str):
         lines = history.splitlines()
@@ -1110,6 +1132,8 @@ CodeStatement = TaggedUnionPattern(
         "sql_read_only": SQLReadOnly,
         "break": PrefixPattern(MaybeSpaces, ExactString("/break")),
         "print": PrefixPattern(MaybeSpaces, ExactString("/print")),
+        "write_file": PrefixPattern(MaybeSpaces, ExactString("/write")),
+        "read_file": PrefixPattern(MaybeSpaces, ExactString("/read")),
         "llm": PrefixPattern(MaybeSpaces, ExactString("/llm")),
         "format_string": FormatStringPattern,
         "call": ProcedureCallPattern,
@@ -1264,6 +1288,10 @@ def make_statements(statements: list[dict]) -> list[Statement]:
                 result.append(CallLLM())
             case "print":
                 result.append(OutputText())
+            case "write_file":
+                result.append(WriteFile())
+            case "read_file":
+                result.append(ReadFile())
             case "break":
                 result.append(BreakStatement())
             case "branch":
