@@ -139,11 +139,7 @@ class Z3Enum:
         if isinstance(value, Z3Enum):
             result = True
             for key in set(self.variables.keys()).union(set(value.variables.keys())):
-                try:
-                    result = z3.And(result, (self.variables.get(key, False) == value.variables.get(key, False)))
-                except:
-                    breakpoint()
-                    raise
+                result = z3.And(result, (self.variables.get(key, False) == value.variables.get(key, False)))
             return result
         else:
             return self.variables.get(value, False)
@@ -162,7 +158,7 @@ def get_model_value(model, var_type, variable):
     if var_type == "Real":
         return float(model[variable].as_fraction())
     elif var_type == "Int":
-        return int(model[variable].as_fraction())
+        return int(model[variable].py_value())
     elif var_type == "Bool":
         return bool(model[variable])
     elif var_type == "Enum":
@@ -187,7 +183,8 @@ def solve_model(model, data):
             except ValueError:
                 dimensions.append(sets[set_def])
         if var_type == "Enum":
-            [options, *dimensions] = dimensions
+            options = dimensions[-1]
+            dimensions = dimensions[:-1]
             var_class = functools.partial(Z3Enum, options)
         else:
             var_class = getattr(z3, var_type)
@@ -226,25 +223,116 @@ def solve_model(model, data):
     return result
 
 
+def merge_var_types(a, b):
+    if a is None:
+        return b
+    if a == b:
+        return a
+    if set((a, b)) == set(("Int", "Real")):
+        return "Real"
+    else:
+        raise ValueError()
+
+
+def merge_dimensions(a, b):
+    result = []
+    for idx in range(max(len(a), len(b))):
+        if idx >= len(a):
+            a_piece = []
+        else:
+            a_piece = a[idx]
+        if idx >= len(b):
+            b_piece = []
+        else:
+            b_piece = b[idx]
+        result.append(list(set(a_piece).union(set(b_piece))))
+    return result
+
+
+def tree_to_variables(var_tree, var_name):
+    try:
+        if isinstance(var_tree, bool):
+            if var_tree:
+                return "Bool", [], [f"{var_name}"]
+            else:
+                return "Bool", [], [f"~{var_name}"]
+        elif isinstance(var_tree, int):
+            return "Int", [], [f"{var_name} == {var_tree}"]
+        elif isinstance(var_tree, float):
+            return "Real", [], [f"{var_name} == {var_tree}"]
+        elif isinstance(var_tree, str):
+            return "Enum", [[var_tree]], [f'{var_name} == "{var_tree}"']
+        elif isinstance(var_tree, list):
+            first_dimension = len(var_tree)
+            final_var_type = None
+            final_dimensions = []
+            all_satisfy = []
+            for idx, value in enumerate(var_tree):
+                var_type, remaining_dimensions, satisfy = tree_to_variables(value, f"{var_name}[{idx}]")
+                final_var_type = merge_var_types(final_var_type, var_type)
+                final_dimensions = merge_dimensions(final_dimensions, remaining_dimensions)
+                all_satisfy += satisfy
+            return (final_var_type, [first_dimension] + final_dimensions, all_satisfy)
+        elif isinstance(var_tree, dict):
+            first_dimension = []
+            final_var_type = None
+            final_dimensions = []
+            all_satisfy = []
+            for key, value in var_tree.items():
+                first_dimension.append(key)
+                var_type, remaining_dimensions, satisfy = tree_to_variables(value, f"{var_name}.{key}")
+                final_var_type = merge_var_types(final_var_type, var_type)
+                final_dimensions = merge_dimensions(final_dimensions, remaining_dimensions)
+                all_satisfy += satisfy
+            return (final_var_type, [first_dimension] + final_dimensions, all_satisfy)
+    except ValueError as e:
+        raise ValueError("Could not get consistent types for variable: {var_name=}. ({e.args})")
+
+
 if __name__ == "__main__":
     arg_config = argparse.ArgumentParser()
     arg_config.add_argument("--new-layer")
     arg_config.add_argument("--new-project")
     arg_config.add_argument("--new-template")
+    arg_config.add_argument("--new-model")
     args = arg_config.parse_args()
     if args.new_project is not None:
         # Create a new project with all the files in this directory and one layer
         files = os.listdir(".")
         new_dir_name = f"000_{args.new_project}"
-        try:
-            os.mkdir(new_dir_name)
-        except e:
-            breakpoint()
-            print(e)
-            exit()
+        os.mkdir(new_dir_name)
         for filename in files:
             os.rename(filename, os.path.join(new_dir_name, filename))
         print("ok")
+    elif args.new_model is not None:
+        # Convert a data file to a model
+        layers = os.listdir(".")
+        layers.sort()
+        top_layer = layers[-1]
+        filename = os.path.join(top_layer, "data", args.new_model)
+        new_filename = os.path.join(top_layer, "models", args.new_model)
+        with open(filename, "r") as f:
+            target = yaml.safe_load(f.read())
+
+        model = {"output": os.path.splitext(args.new_model)[0], "sets": {}, "variables": {}, "satisfy": []}
+        for key, var_tree in target.items():
+            var_type, dimensions, path_values = tree_to_variables(var_tree, key)
+            var_spec = [var_type]
+            for idx, dimension in enumerate(dimensions):
+                if isinstance(dimension, list):
+                    dimension_name = f"{key}_{idx}"
+                    model["sets"][dimension_name] = dimension
+                    var_spec.append(dimension_name)
+                elif isinstance(dimension, int):
+                    var_spec.append(str(dimension))
+            model["variables"][key] = " ".join(var_spec)
+            model["satisfy"] += path_values
+
+        with open(new_filename, "w") as f:
+            f.write(yaml.safe_dump(model))
+
+        os.remove(filename)
+        print(f"Created a model for generating {filename} as {new_filename}")
 
     elif args.new_layer is not None:
         # Create a new layer
@@ -267,7 +355,6 @@ if __name__ == "__main__":
             f.write("[]")
         os.mkdir(os.path.join(new_dir_name, "templates"))
         os.mkdir(os.path.join(new_dir_name, "models"))
-
     elif args.new_template is not None:
         # Move a previously static file to be a template
         layers = os.listdir(".")
@@ -311,6 +398,8 @@ if __name__ == "__main__":
                     with open(model_filename, "r") as f:
                         model = yaml.safe_load(f.read())
                     data[model["output"]] = solve_model(model, data)
+                with open(os.path.join(source, "data", f'{model["output"]}.yaml'), "w") as f:
+                    f.write(yaml.safe_dump(data[model["output"]]))
             env = jinja2.Environment(loader=jinja2.FileSystemLoader(os.path.join(source, "templates")))
             for dest_file in to_generate:
                 with open(os.path.join(target, dest_file["filename"]), "w") as f:
