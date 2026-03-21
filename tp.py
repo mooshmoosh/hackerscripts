@@ -4,6 +4,7 @@ import os
 import itertools
 import shutil
 import argparse
+import functools
 
 try:
     import yaml
@@ -24,6 +25,21 @@ z3solver z3
             globals()[name] = __import__(name)
 
 
+def parse_csv_value(value):
+    try:
+        return int(value)
+    except ValueError:
+        pass
+    try:
+        return float(value)
+    except ValueError:
+        pass
+    value = value.strip()
+    if value == "":
+        return None
+    return value
+
+
 def load_data(data_dir):
     data = {}
     for filename in os.listdir(data_dir):
@@ -37,13 +53,16 @@ def load_data(data_dir):
                 data[name] = {}
                 reader = csv.DictReader(f)
                 index_column = reader.fieldnames[0]
-                for row in reader:
-                    data[name][row[index_column]] = row
+                for text_row in reader:
+                    for key, value in text_row.items():
+                        data[name][text_row[index_column]] = {
+                            key: parse_csv_value(value) for key, value in text_row.items()
+                        }
             elif extension == ".csv":
                 data[name] = []
                 reader = csv.DictReader(f)
                 for row in reader:
-                    data[name].append(row)
+                    data[name].append({key: parse_csv_value(value) for key, value in row.items()})
     return to_generate, data
 
 
@@ -112,8 +131,47 @@ def set_path(root, path, value):
     root[path[-1]] = value
 
 
+class Z3Enum:
+    def __init__(self, options, name):
+        self.variables = {option: z3.Bool(f"{name}.{option}") for option in options}
+
+    def __eq__(self, value):
+        if isinstance(value, Z3Enum):
+            result = True
+            for key in set(self.variables.keys()).union(set(value.variables.keys())):
+                try:
+                    result = z3.And(result, (self.variables.get(key, False) == value.variables.get(key, False)))
+                except:
+                    breakpoint()
+                    raise
+            return result
+        else:
+            return self.variables.get(value, False)
+
+    def __ne__(self, other):
+        return z3.Not(self == other)
+
+    def get_value(self, model):
+        for option, variable in self.variables.items():
+            if bool(model[variable]):
+                return option
+        return None
+
+
+def get_model_value(model, var_type, variable):
+    if var_type == "Real":
+        return float(model[variable].as_fraction())
+    elif var_type == "Int":
+        return int(model[variable].as_fraction())
+    elif var_type == "Bool":
+        return bool(model[variable])
+    elif var_type == "Enum":
+        return variable.get_value(model)
+    else:
+        return model[variable]
+
+
 def solve_model(model, data):
-    solver = z3.Solver()
     variables = {}
     types = {}
     sets = model.get("sets", {})
@@ -128,16 +186,30 @@ def solve_model(model, data):
                 dimensions.append(range(int(set_def)))
             except ValueError:
                 dimensions.append(sets[set_def])
+        if var_type == "Enum":
+            [options, *dimensions] = dimensions
+            var_class = functools.partial(Z3Enum, options)
+        else:
+            var_class = getattr(z3, var_type)
         for instance in itertools.product(*dimensions):
             z3_name = [var_name]
             for step in instance:
                 z3_name += ['["', step, '"]']
             variable_path = (var_name,) + instance
-            variables[variable_path] = getattr(z3, var_type)("".join(z3_name))
+            variables[variable_path] = var_class("".join(z3_name))
             types[variable_path] = var_type
             set_path(eval_locals, variable_path, variables[variable_path])
-
     eval_locals = {k: wrapper(v) for k, v in eval_locals.items()}
+
+    if "minimize" in model:
+        solver = z3.Optimize()
+        solver.minimize(eval(model["minimize"], globals=eval_locals))
+    elif "maximize" in model:
+        solver = z3.Optimize()
+        solver.maximize(eval(model["maximize"], globals=eval_locals))
+    else:
+        solver = z3.Solver()
+
     for constraint in model["satisfy"]:
         try:
             solver.add(eval(constraint, globals=eval_locals))
@@ -145,20 +217,12 @@ def solve_model(model, data):
             print(f"Error adding {constraint=}")
             breakpoint()
             raise
+
     solver.check()
     m = solver.model()
     result = {}
     for var_path, variable in variables.items():
-        if types[var_path] == "Real":
-            try:
-                set_path(result, var_path, float(m[variable].as_fraction()))
-            except:
-                breakpoint()
-                raise
-        elif types[var_path] == "Int":
-            set_path(result, var_path, int(m[variable].as_fraction()))
-        elif types[var_path] == "Bool":
-            set_path(result, var_path, bool(m[variable]))
+        set_path(result, var_path, get_model_value(m, types[var_path], variable))
     return result
 
 
@@ -184,12 +248,6 @@ if __name__ == "__main__":
 
     elif args.new_layer is not None:
         # Create a new layer
-        # TODO: Alternatively, move the file and create a symlink from the old file location to the new file (possibly if this is not the first new layer we're creating)
-        # TODO: gitignore the files in the previous top layer
-        # (unless the previous top layer was the only one) We should track the very top layer and
-        # the very bottom layer in git. If you do this by creating a .gitignore file in the directly
-        # that ignores all files in that directory, then you'll still have the directory in git,
-        # which we need because that defines how many layers there are in the system
         layers = os.listdir(".")
         layers.sort()
         top_layer = int(layers[-1].split("_")[0])
@@ -203,10 +261,6 @@ if __name__ == "__main__":
             os.makedirs(new_subdir_name, exist_ok=True)
             for filename in filenames:
                 new_path = os.path.join(new_subdir_name, filename)
-                # TODO: replace the following with a symlink to the old file called the new filename (os.symlink)
-                # os.symlink(os.path.join(path, filename), new_path)
-                # but we still want to be able to check that we haven't changed the final generated text with git
-                # So we might want to do this with each layer except the last one.
                 shutil.copyfile(os.path.join(path, filename), new_path)
         os.mkdir(os.path.join(new_dir_name, "data"))
         with open(os.path.join(new_dir_name, "data", "main.yaml"), "w") as f:
@@ -215,6 +269,7 @@ if __name__ == "__main__":
         os.mkdir(os.path.join(new_dir_name, "models"))
 
     elif args.new_template is not None:
+        # Move a previously static file to be a template
         layers = os.listdir(".")
         layers.sort()
         top_layer = layers[-1]
@@ -222,10 +277,10 @@ if __name__ == "__main__":
         new_filename = os.path.join(top_layer, "templates", args.new_template)
         print(f"making {filename} into a template")
         os.makedirs(os.path.dirname(new_filename), exist_ok=True)
-        # TODO: replace all jinja directives with escapes
-        # {{ -> {{"{{"}}
-        # {% -> {{"{%"}}
-        os.rename(filename, new_filename)
+        with open(filename, "r") as of:
+            with open(new_filename, "w") as nf:
+                nf.write(of.read().replace("{{", '{{"{{"}}').replace("{%", '{{"{%"}}'))
+        os.remove(filename)
         with open(os.path.join(top_layer, "data", "main.yaml"), "r") as f:
             main_data = yaml.safe_load(f.read())
         main_data.append({"template": args.new_template, "filename": args.new_template})
@@ -238,13 +293,15 @@ if __name__ == "__main__":
         layers = os.listdir(".")
         layers.sort()
         for source, target in itertools.pairwise(reversed(layers)):
-            # TODO: Delete all files in target recursively
             try:
                 int(source[:3])
                 int(target[:3])
             except:
                 continue
             print(f"processing {source} -> {target}")
+            for path, _, filenames in os.walk(target):
+                for filename in filenames:
+                    os.remove(os.path.join(path, filename))
             data_dir = os.path.join(source, "data")
             to_generate, data = load_data(data_dir)
             model_dir = os.path.join(source, "models")
@@ -267,8 +324,4 @@ if __name__ == "__main__":
                     # remove 'static'
                     sub_path = os.path.splitroot(path[len(static_base_path) :])[2]
                     new_path = os.path.join(target, sub_path, filename)
-                    # TODO: replace the following with a symlink to the old file called the new filename (os.symlink)
-                    # os.symlink(os.path.join(path, filename), new_path)
-                    # but we still want to be able to check that we haven't changed the final generated text with git
-                    # So we might want to do this with each layer except the last one.
                     shutil.copyfile(os.path.join(path, filename), new_path)
