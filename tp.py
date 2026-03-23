@@ -153,6 +153,9 @@ class Z3Enum:
                 return option
         return None
 
+    def get_constraints(self):
+        return (z3.AtLeast(*self.variables.values(), 1), z3.AtMost(*self.variables.values(), 1))
+
 
 def get_model_value(model, var_type, variable):
     if var_type == "Real":
@@ -191,12 +194,13 @@ def solve_model(model, data):
         for instance in itertools.product(*dimensions):
             z3_name = [var_name]
             for step in instance:
-                z3_name += ['["', step, '"]']
+                z3_name += ['["', str(step), '"]']
             variable_path = (var_name,) + instance
             variables[variable_path] = var_class("".join(z3_name))
             types[variable_path] = var_type
             set_path(eval_locals, variable_path, variables[variable_path])
     eval_locals = {k: wrapper(v) for k, v in eval_locals.items()}
+    eval_locals["z3"] = z3
 
     if "minimize" in model:
         solver = z3.Optimize()
@@ -206,6 +210,12 @@ def solve_model(model, data):
         solver.maximize(eval(model["maximize"], globals=eval_locals))
     else:
         solver = z3.Solver()
+    # solver.set("sat.cardinality.solver", True)
+
+    # Add constraints that the enums take at least one value
+    for var_path, var_type in types.items():
+        if var_type == "Enum":
+            solver.add(variables[var_path].get_constraints())
 
     for constraint in model["satisfy"]:
         try:
@@ -215,7 +225,9 @@ def solve_model(model, data):
             breakpoint()
             raise
 
-    solver.check()
+    if solver.check() != z3.sat:
+        raise RuntimeError(f"Unsat model")
+
     m = solver.model()
     result = {}
     for var_path, variable in variables.items():
@@ -397,7 +409,10 @@ if __name__ == "__main__":
                 if os.path.splitext(model_filename)[-1] == ".yaml":
                     with open(model_filename, "r") as f:
                         model = yaml.safe_load(f.read())
-                    data[model["output"]] = solve_model(model, data)
+                    try:
+                        data[model["output"]] = solve_model(model, data)
+                    except RuntimeError:
+                        raise RuntimeError(f"Could not get a solution to model in {model_filename}")
                 with open(os.path.join(source, "data", f'{model["output"]}.yaml'), "w") as f:
                     f.write(yaml.safe_dump(data[model["output"]]))
             env = jinja2.Environment(loader=jinja2.FileSystemLoader(os.path.join(source, "templates")))
