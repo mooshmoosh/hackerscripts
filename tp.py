@@ -338,6 +338,7 @@ if __name__ == "__main__":
     arg_config.add_argument("--new-project")
     arg_config.add_argument("--new-template")
     arg_config.add_argument("--new-model")
+    arg_config.add_argument("--uplift")
     args = arg_config.parse_args()
     if args.new_project is not None:
         # Create a new project with all the files in this directory and one layer
@@ -395,7 +396,7 @@ if __name__ == "__main__":
                 shutil.copyfile(os.path.join(path, filename), new_path)
         os.mkdir(os.path.join(new_dir_name, "data"))
         with open(os.path.join(new_dir_name, "data", "main.yaml"), "w") as f:
-            f.write("[]")
+            f.write('{"templates":[],"data":[]}')
         os.mkdir(os.path.join(new_dir_name, "templates"))
         os.mkdir(os.path.join(new_dir_name, "models"))
     elif args.new_template is not None:
@@ -413,9 +414,20 @@ if __name__ == "__main__":
         os.remove(filename)
         with open(os.path.join(top_layer, "data", "main.yaml"), "r") as f:
             main_data = yaml.safe_load(f.read())
-        main_data.append({"template": args.new_template, "filename": args.new_template})
+        main_data["templates"].append({"template": args.new_template, "filename": args.new_template})
         with open(os.path.join(top_layer, "data", "main.yaml"), "w") as f:
             f.write(yaml.safe_dump(main_data))
+        print("Ok")
+    elif args.uplift is not None:
+        layers = os.listdir(".")
+        layers.sort()
+        source = layers[-2]
+        target = layers[-1]
+        shutil.copyfile(
+            os.path.join(source, "data", args.uplift),
+            os.path.join(target, "data", args.uplift),
+        )
+        print("Ok")
     else:
         print("Ready to run?")
         if input() != "y":
@@ -447,10 +459,16 @@ if __name__ == "__main__":
                 with open(os.path.join(source, "data", f'{model["output"]}.yaml'), "w") as f:
                     f.write(yaml.safe_dump(data[model["output"]]))
             env = jinja2.Environment(loader=jinja2.FileSystemLoader(os.path.join(source, "templates")))
-            for dest_file in to_generate:
+            for dest_file in to_generate["templates"]:
                 with open(os.path.join(target, dest_file["filename"]), "w") as f:
                     dest_file["d"] = data
                     f.write(env.get_template(dest_file["template"]).render(dest_file))
+            for data_file in to_generate["data"]:
+                # Need to copy the file to the target data directory
+                shutil.copyfile(
+                    os.path.join(source, "data", data_file["filename"]),
+                    os.path.join(target, "data", data_file["filename"]),
+                )
             static_base_path = os.path.join(source, "static")
             for path, _, filenames in os.walk(static_base_path):
                 for filename in filenames:
