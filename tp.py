@@ -5,6 +5,7 @@ import itertools
 import shutil
 import argparse
 import functools
+import re
 
 try:
     import yaml
@@ -49,6 +50,9 @@ def load_data(data_dir):
                 to_generate = yaml.safe_load(f.read())
             elif extension == ".yaml":
                 data[name] = yaml.safe_load(f.read())
+            elif extension == ".ssv":
+                # indented, nested lists of data
+                data[name] = parse_space_seperated_data(f.read())
             elif extension == ".icsv":
                 data[name] = {}
                 reader = csv.DictReader(f)
@@ -299,6 +303,33 @@ def tree_to_variables(var_tree, var_name):
             return (final_var_type, [first_dimension] + final_dimensions, all_satisfy)
     except ValueError as e:
         raise ValueError("Could not get consistent types for variable: {var_name=}. ({e.args})")
+
+
+def parse_space_seperated_data(data):
+    """ """
+    stack = [[]]
+    for line in data.splitlines():
+        stripped_line = line.strip()
+        if len(stripped_line) == 0:
+            continue
+        indent = int(re.compile(r"^\s*").match(line).span()[1] / 2)
+        while len(stack) > indent + 1:
+            stack.pop()
+        while len(stack) < indent + 1:
+            stack[-1][-1].append([])
+            stack.append(stack[-1][-1][-1])
+        new_line = []
+        while True:
+            m = re.compile(r'\s*("(\\"|[^"])*"|[^\s]+)').match(stripped_line)
+            if m is None:
+                break
+            new_piece = m.group(1)
+            if new_piece[0] == '"':
+                new_piece = new_piece[1:-1]
+            new_line.append(new_piece)
+            stripped_line = stripped_line[m.span()[1] :]
+        stack[-1].append(new_line)
+    return stack[0]
 
 
 if __name__ == "__main__":
