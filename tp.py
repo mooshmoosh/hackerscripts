@@ -421,12 +421,16 @@ if __name__ == "__main__":
     elif args.uplift is not None:
         layers = os.listdir(".")
         layers.sort()
-        source = layers[-2]
-        target = layers[-1]
-        shutil.copyfile(
-            os.path.join(source, "data", args.uplift),
-            os.path.join(target, "data", args.uplift),
+        top_layer = layers[-1]
+        os.rename(
+            os.path.join(top_layer, "static", "data", args.uplift),
+            os.path.join(top_layer, "data", args.uplift),
         )
+        with open(os.path.join(top_layer, "data", "main.yaml"), "r") as f:
+            main_data = yaml.safe_load(f.read())
+        main_data["data"].append({"filename": args.uplift})
+        with open(os.path.join(top_layer, "data", "main.yaml"), "w") as f:
+            f.write(yaml.safe_dump(main_data))
         print("Ok")
     else:
         print("Ready to run?")
