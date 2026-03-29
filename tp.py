@@ -15,7 +15,7 @@ except ImportError:
     for pkg, name in [x.split() for x in """
 pyyaml yaml
 jinja2 jinja2
-z3solver z3
+z3-solver z3
 """.strip().split("\n")]:
         try:
             globals()[name] = __import__(name)
