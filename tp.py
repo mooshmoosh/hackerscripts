@@ -10,12 +10,10 @@ import re
 try:
     import yaml
     import jinja2
-    import z3
 except ImportError:
     for pkg, name in [x.split() for x in """
 pyyaml yaml
 jinja2 jinja2
-z3-solver z3
 """.strip().split("\n")]:
         try:
             globals()[name] = __import__(name)
@@ -24,6 +22,11 @@ z3-solver z3
 
             pip.main(["install", pkg])
             globals()[name] = __import__(name)
+
+try:
+    import z3
+except:
+    z3 = None
 
 
 def parse_csv_value(value):
@@ -175,6 +178,9 @@ def get_model_value(model, var_type, variable):
 
 
 def solve_model(model, data):
+    if z3 is None:
+        print("z3 isn't available, can't run models")
+        return {}
     variables = {}
     types = {}
     sets = model.get("sets", {})
